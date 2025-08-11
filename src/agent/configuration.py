@@ -2,54 +2,52 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
-from typing import Annotated, Optional
+from typing import Annotated, Optional, Any, Dict
 
 from langchain_core.runnables import RunnableConfig, ensure_config
 
 from . import prompts
 
 
-@dataclass(kw_only=True)
 class Configuration:
-    """The configuration for the data enrichment agent."""
+    """The configuration for the data enrichment agent.
+    
+    This class uses a flexible approach to handle any parameters that LangGraph 0.4.8+ 
+    might inject, preventing constructor errors while maintaining functionality.
+    """
 
-    model: Annotated[str, {"__template_metadata__": {"kind": "llm"}}] = field(
-        default="anthropic/claude-3-5-sonnet-20240620",
-        metadata={
-            "description": "The name of the language model to use for the agent. "
-            "Should be in the form: provider/model-name."
-        },
-    )
-
-    prompt: str = field(
-        default=prompts.MAIN_PROMPT,
-        metadata={
-            "description": "The main prompt template to use for the agent's interactions. "
-            "Expects two f-string arguments: {info} and {topic}."
-        },
-    )
-
-    max_search_results: int = field(
-        default=10,
-        metadata={
-            "description": "The maximum number of search results to return for each search query."
-        },
-    )
-
-    max_info_tool_calls: int = field(
-        default=3,
-        metadata={
-            "description": "The maximum number of times the Info tool can be called during a single interaction."
-        },
-    )
-
-    max_loops: int = field(
-        default=6,
-        metadata={
-            "description": "The maximum number of interaction loops allowed before the agent terminates."
-        },
-    )
+    def __init__(self, **kwargs):
+        """Initialize configuration with flexible parameter handling.
+        
+        Args:
+            **kwargs: Any parameters, including those injected by LangGraph
+        """
+        # Extract known configuration fields with defaults
+        self.thread_id = kwargs.get('thread_id')
+        self.host = kwargs.get('host')
+        self.connection = kwargs.get('connection')  # Handle the 'connection' parameter
+        
+        # Model configuration
+        self.model = kwargs.get('model', 'openai/gpt-4o-mini')
+        
+        # Prompt configuration
+        self.prompt = kwargs.get('prompt', prompts.MAIN_PROMPT)
+        
+        # Search configuration
+        self.max_search_results = kwargs.get('max_search_results', 10)
+        
+        # Tool configuration
+        self.max_info_tool_calls = kwargs.get('max_info_tool_calls', 3)
+        
+        # Loop configuration
+        self.max_loops = kwargs.get('max_loops', 6)
+        
+        # Store any unknown parameters that LangGraph might inject
+        known_fields = {
+            'thread_id', 'host', 'connection', 'model', 'prompt', 
+            'max_search_results', 'max_info_tool_calls', 'max_loops'
+        }
+        self._extra_params = {k: v for k, v in kwargs.items() if k not in known_fields}
 
     @classmethod
     def from_runnable_config(
@@ -58,5 +56,7 @@ class Configuration:
         """Load configuration w/ defaults for the given invocation."""
         config = ensure_config(config)
         configurable = config.get("configurable") or {}
-        _fields = {f.name for f in fields(cls) if f.init}
-        return cls(**{k: v for k, v in configurable.items() if k in _fields})
+        
+        # Pass all parameters directly to the flexible constructor
+        # The __init__ method will handle filtering and storage
+        return cls(**configurable)

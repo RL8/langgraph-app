@@ -6,10 +6,10 @@ Users can edit and extend these tools as needed.
 """
 
 import json
+import os
 from typing import Any, Optional, cast
 
 import aiohttp
-from duckduckgo_search import DDGS
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import InjectedToolArg
 from langgraph.prebuilt import InjectedState
@@ -23,31 +23,62 @@ from .utils import init_model
 async def search(
     query: str, *, config: Annotated[RunnableConfig, InjectedToolArg]
 ) -> Optional[list[dict[str, Any]]]:
-    """Query a search engine using DuckDuckGo (free).
+    """Query a search engine using Tavily.
 
     This function queries the web to fetch comprehensive, accurate, and trusted results. It's particularly useful
     for answering questions about current events. Provide as much context in the query as needed to ensure high recall.
     """
     configuration = Configuration.from_runnable_config(config)
     
+    # Get Tavily API key from environment
+    tavily_api_key = os.getenv("TAVILY_API_KEY")
+    if not tavily_api_key:
+        return [{"error": "TAVILY_API_KEY environment variable is required"}]
+    
     try:
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=configuration.max_search_results))
+        # Use Tavily API directly
+        async with aiohttp.ClientSession() as session:
+            headers = {
+                "Authorization": f"Bearer {tavily_api_key}",
+                "content-type": "application/json"
+            }
             
-        # Format results to match expected structure
-        formatted_results = []
-        for result in results:
-            formatted_results.append({
-                "title": result.get("title", ""),
-                "link": result.get("link", ""),
-                "snippet": result.get("body", ""),
-                "source": "DuckDuckGo"
-            })
-        
-        return formatted_results
+            payload = {
+                "query": query,
+                "max_results": configuration.max_search_results,
+                "search_depth": "basic",
+                "include_answer": False,
+                "include_raw_content": False
+            }
+            
+            async with session.post(
+                "https://api.tavily.com/search",
+                headers=headers,
+                json=payload,
+                timeout=30
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    results = data.get("results", [])
+                    
+                    # Format results to match expected structure
+                    formatted_results = []
+                    for result in results:
+                        formatted_results.append({
+                            "title": result.get("title", ""),
+                            "link": result.get("url", ""),
+                            "snippet": result.get("content", ""),
+                            "source": "Tavily"
+                        })
+                    
+                    return formatted_results
+                else:
+                    error_text = await response.text()
+                    return [{"error": f"Tavily API error: {response.status} - {error_text}"}]
+                    
     except Exception as e:
         print(f"Search error: {e}")
-        return []
+        return [{"error": f"Search error: {str(e)}"}]
 
 
 _INFO_PROMPT = """You are doing web research on behalf of a user. You are trying to find out this information:

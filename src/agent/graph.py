@@ -11,6 +11,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph
 from langgraph.prebuilt import ToolNode
 from pydantic import BaseModel, Field
+from langsmith import Client
 
 from agent import prompts
 from agent.configuration import Configuration
@@ -18,6 +19,8 @@ from agent.state import InputState, OutputState, State
 from agent.tools import scrape_website, search
 from agent.utils import init_model
 
+# Initialize LangSmith client
+langsmith_client = Client()
 
 async def call_agent_model(
     state: State, *, config: Optional[RunnableConfig] = None
@@ -47,12 +50,23 @@ async def call_agent_model(
     )
 
     # Create the messages list with the formatted prompt and the previous messages
-    messages = [HumanMessage(content=p)] + state.messages
+    initial_message = HumanMessage(content=p)
+    initial_message.additional_kwargs['isHumanMessage'] = True
+    messages = [initial_message] + state.messages
 
     # Initialize the raw model with the provided configuration and bind the tools
     raw_model = init_model(config)
     model = raw_model.bind_tools([scrape_website, search, info_tool], tool_choice="any")
-    response = cast(AIMessage, await model.ainvoke(messages))
+    
+    # Add LangSmith metadata for tracing
+    run_metadata = {
+        "topic": state.topic,
+        "extraction_schema": json.dumps(state.extraction_schema),
+        "loop_step": state.loop_step,
+        "has_previous_info": state.info is not None
+    }
+    
+    response = cast(AIMessage, await model.ainvoke(messages, config={"metadata": run_metadata}))
 
     # Initialize info to None
     info = None
@@ -74,6 +88,14 @@ async def call_agent_model(
         response_messages.append(
             HumanMessage(content="Please respond by calling one of the provided tools.")
         )
+    
+    # Add message type flags for Studio UI compatibility
+    for msg in response_messages:
+        if isinstance(msg, HumanMessage):
+            msg.additional_kwargs['isHumanMessage'] = True
+        elif isinstance(msg, AIMessage):
+            msg.additional_kwargs['isAiMessage'] = True
+    
     return {
         "messages": response_messages,
         "info": info,

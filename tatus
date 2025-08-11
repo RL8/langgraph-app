@@ -1,0 +1,49 @@
+[33mcommit 538d3f20b00b8ace4ab505473f742480c196a2be[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmaster[m[33m)[m
+Author: Bravo Nyamudoka <bravo@example.com>
+Date:   Sat Aug 9 14:15:38 2025 +0100
+
+    feat: Implement data enrichment agent with OpenAI integration
+    
+    - Add complete data enrichment workflow with multi-node graph
+    - Integrate OpenAI GPT-4o-mini for LLM capabilities
+    - Implement free DuckDuckGo search tool (no API key required)
+    - Add web scraping functionality with aiohttp
+    - Create structured state management for research topics and extraction schemas
+    - Implement configurable parameters for model, search results, and loops
+    - Add proper error handling and timeout for web requests
+    - Include comprehensive prompts for research and content analysis
+    - Set up development server with LangGraph Studio integration
+    - Configure environment variables for OpenAI API key
+    - Add proper package structure with editable installation
+    - Include all necessary dependencies (aiohttp, langchain-openai, duckduckgo-search)
+    
+    The agent can now:
+    - Accept research topics and extraction schemas
+    - Perform web searches using DuckDuckGo
+    - Scrape and analyze website content
+    - Validate extracted information against schemas
+    - Provide structured output based on requirements
+
+.codespellignore
+.env.example
+.github/workflows/integration-tests.yml
+.github/workflows/unit-tests.yml
+.gitignore
+LICENSE
+Makefile
+README.md
+langgraph.json
+pyproject.toml
+src/agent/__init__.py
+src/agent/configuration.py
+src/agent/graph.py
+src/agent/prompts.py
+src/agent/state.py
+src/agent/tools.py
+src/agent/utils.py
+static/studio_ui.png
+tests/conftest.py
+tests/integration_tests/__init__.py
+tests/integration_tests/test_graph.py
+tests/unit_tests/__init__.py
+tests/unit_tests/test_configuration.py
