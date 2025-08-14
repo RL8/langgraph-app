@@ -6,6 +6,7 @@ and confidence scoring. Focuses on finding likely matches for user-provided arti
 """
 
 import asyncio
+import logging
 import re
 from typing import Dict, List, Any, Optional
 from urllib.parse import quote
@@ -19,12 +20,16 @@ class ArtistSearchMCPServer(BaseMCPServer):
     """MCP server for intelligent artist search using Wikidata."""
     
     def __init__(self, config: Optional[MCPConfig] = None):
-        super().__init__(config or MCPConfig())
+        # Create default config if none provided
+        if config is None:
+            config = MCPConfig()
+        super().__init__(config)
         self.wikidata_url = "https://query.wikidata.org/sparql"
         self.headers = {
             "User-Agent": "MusicApp/1.0 (https://github.com/your-repo; your-email@example.com)",
             "Accept": "application/sparql-results+json"
         }
+        self.logger = logging.getLogger(__name__)
     
     async def search(self, artist_name: str, search_options: Optional[Dict] = None) -> Dict[str, Any]:
         """
@@ -84,8 +89,7 @@ class ArtistSearchMCPServer(BaseMCPServer):
         SELECT ?artist ?artistLabel ?description ?country ?image ?occupation ?birthYear ?deathYear
         WHERE {
           ?artist wdt:P31 wd:Q5 .
-          ?artist ?label ?name .
-          FILTER(?name = "%s"@en)
+          ?artist ?label "%s"@en .
           OPTIONAL { ?artist wdt:P27 ?country . }
           OPTIONAL { ?artist wdt:P18 ?image . }
           OPTIONAL { ?artist wdt:P106 ?occupation . }
@@ -96,7 +100,9 @@ class ArtistSearchMCPServer(BaseMCPServer):
         LIMIT 10
         """ % artist_name
         
+        self.logger.info(f"Executing exact search query: {query}")
         results = await self._execute_sparql_query(query)
+        return [self._process_result(r, "exact", 0.95) for r in results]
         return [self._process_result(r, "exact", 0.95) for r in results]
     
     async def _fuzzy_name_search(self, artist_name: str) -> List[Dict]:
@@ -152,24 +158,29 @@ class ArtistSearchMCPServer(BaseMCPServer):
     
     async def _execute_sparql_query(self, query: str) -> List[Dict]:
         """Execute SPARQL query with rate limiting and error handling."""
-        async with self.rate_limiter:
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        self.wikidata_url,
-                        headers=self.headers,
-                        data={"query": query, "format": "json"},
-                        timeout=aiohttp.ClientTimeout(total=30)
-                    ) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            return data.get("results", {}).get("bindings", [])
-                        else:
-                            self.logger.error(f"SPARQL query failed: {response.status}")
-                            return []
-            except Exception as e:
-                self.logger.error(f"Error executing SPARQL query: {e}")
-                return []
+        # Check rate limits
+        if not self.rate_limiter.can_make_request():
+            await asyncio.sleep(2)
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self.wikidata_url,
+                    headers=self.headers,
+                    data={"query": query, "format": "json"},
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        self.logger.info(f"SPARQL response: {data}")
+                        return data.get("results", {}).get("bindings", [])
+                    else:
+                        error_text = await response.text()
+                        self.logger.error(f"SPARQL query failed: {response.status} - {error_text}")
+                        return []
+        except Exception as e:
+            self.logger.error(f"Error executing SPARQL query: {e}")
+            return []
     
     def _process_result(self, result: Dict, match_type: str, base_confidence: float) -> Dict:
         """Process and score a single search result."""
@@ -252,3 +263,12 @@ class ArtistSearchMCPServer(BaseMCPServer):
             ])
         
         return suggestions
+    
+    def get_capabilities(self) -> List[str]:
+        """Get list of server capabilities."""
+        return [
+            "artist_search",
+            "fuzzy_matching", 
+            "confidence_scoring",
+            "search_suggestions"
+        ]

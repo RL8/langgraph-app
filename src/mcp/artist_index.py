@@ -6,6 +6,7 @@ Focuses on getting high-quality, relevant content from Wikipedia.
 """
 
 import asyncio
+import logging
 import re
 from typing import Dict, List, Any, Optional
 from urllib.parse import quote, urljoin
@@ -20,13 +21,17 @@ class ArtistIndexMCPServer(BaseMCPServer):
     """MCP server for extracting Wikipedia content for artists and their music."""
     
     def __init__(self, config: Optional[MCPConfig] = None):
-        super().__init__(config or MCPConfig())
+        # Create default config if none provided
+        if config is None:
+            config = MCPConfig()
+        super().__init__(config)
         self.mediawiki_api = "https://en.wikipedia.org/w/api.php"
         self.wikipedia_base = "https://en.wikipedia.org/wiki/"
         self.headers = {
             "User-Agent": "MusicApp/1.0 (https://github.com/your-repo; your-email@example.com)",
             "Accept": "application/json"
         }
+        self.logger = logging.getLogger(__name__)
     
     async def search(self, artist_name: str, artist_id: Optional[str] = None, 
                     enable_web_search: bool = False) -> Dict[str, Any]:
@@ -115,38 +120,41 @@ class ArtistIndexMCPServer(BaseMCPServer):
         
         pages = []
         for query in search_queries:
-            async with self.rate_limiter:
-                try:
-                    params = {
-                        "action": "query",
-                        "list": "search",
-                        "srsearch": query,
-                        "srlimit": 5,
-                        "format": "json"
-                    }
-                    
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(
-                            self.mediawiki_api,
-                            params=params,
-                            headers=self.headers,
-                            timeout=aiohttp.ClientTimeout(total=30)
-                        ) as response:
-                            if response.status == 200:
-                                data = await response.json()
-                                search_results = data.get("query", {}).get("search", [])
-                                
-                                for result in search_results:
-                                    if self._is_relevant_artist_page(result, artist_name):
-                                        pages.append({
-                                            "page_id": result["pageid"],
-                                            "title": result["title"],
-                                            "snippet": result["snippet"]
-                                        })
+            # Check rate limits
+            if not self.rate_limiter.can_make_request():
+                await asyncio.sleep(2)
+            
+            try:
+                params = {
+                    "action": "query",
+                    "list": "search",
+                    "srsearch": query,
+                    "srlimit": 5,
+                    "format": "json"
+                }
                 
-                except Exception as e:
-                    self.logger.error(f"Error searching for {query}: {e}")
-                    continue
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        self.mediawiki_api,
+                        params=params,
+                        headers=self.headers,
+                        timeout=aiohttp.ClientTimeout(total=30)
+                    ) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            search_results = data.get("query", {}).get("search", [])
+                            
+                            for result in search_results:
+                                if self._is_relevant_artist_page(result, artist_name):
+                                    pages.append({
+                                        "page_id": result["pageid"],
+                                        "title": result["title"],
+                                        "snippet": result["snippet"]
+                                    })
+            
+            except Exception as e:
+                self.logger.error(f"Error searching for {query}: {e}")
+                continue
         
         return pages[:3]  # Limit to top 3 results
     
@@ -170,41 +178,44 @@ class ArtistIndexMCPServer(BaseMCPServer):
     
     async def _extract_page_content(self, page: Dict) -> Optional[Dict]:
         """Extract content from a Wikipedia page."""
-        async with self.rate_limiter:
-            try:
-                params = {
-                    "action": "parse",
-                    "pageid": page["page_id"],
-                    "prop": "text|sections|categories",
-                    "format": "json"
-                }
-                
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(
-                        self.mediawiki_api,
-                        params=params,
-                        headers=self.headers,
-                        timeout=aiohttp.ClientTimeout(total=30)
-                    ) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            parse_data = data.get("parse", {})
-                            
-                            if parse_data:
-                                return {
-                                    "page_id": page["page_id"],
-                                    "title": page["title"],
-                                    "url": f"{self.wikipedia_base}{quote(page['title'].replace(' ', '_'))}",
-                                    "content_type": "artist_profile",
-                                    "content": self._clean_html_content(parse_data.get("text", {})),
-                                    "sections": parse_data.get("sections", []),
-                                    "categories": parse_data.get("categories", []),
-                                    "word_count": len(self._clean_html_content(parse_data.get("text", {})).split()),
-                                    "last_updated": "2024-01-15"  # Would need to extract from page
-                                }
-                
-            except Exception as e:
-                self.logger.error(f"Error extracting content from page {page['page_id']}: {e}")
+        # Check rate limits
+        if not self.rate_limiter.can_make_request():
+            await asyncio.sleep(2)
+        
+        try:
+            params = {
+                "action": "parse",
+                "pageid": page["page_id"],
+                "prop": "text|sections|categories",
+                "format": "json"
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    self.mediawiki_api,
+                    params=params,
+                    headers=self.headers,
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        parse_data = data.get("parse", {})
+                        
+                        if parse_data:
+                            return {
+                                "page_id": page["page_id"],
+                                "title": page["title"],
+                                "url": f"{self.wikipedia_base}{quote(page['title'].replace(' ', '_'))}",
+                                "content_type": "artist_profile",
+                                "content": self._clean_html_content(parse_data.get("text", {})),
+                                "sections": parse_data.get("sections", []),
+                                "categories": parse_data.get("categories", []),
+                                "word_count": len(self._clean_html_content(parse_data.get("text", {})).split()),
+                                "last_updated": "2024-01-15"  # Would need to extract from page
+                            }
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting content from page {page['page_id']}: {e}")
         
         return None
     
@@ -264,41 +275,44 @@ class ArtistIndexMCPServer(BaseMCPServer):
             ]
             
             for query in search_queries:
-                async with self.rate_limiter:
-                    try:
-                        params = {
-                            "action": "query",
-                            "list": "search",
-                            "srsearch": query,
-                            "srlimit": 3,
-                            "format": "json"
-                        }
-                        
-                        async with aiohttp.ClientSession() as session:
-                            async with session.get(
-                                self.mediawiki_api,
-                                params=params,
-                                headers=self.headers,
-                                timeout=aiohttp.ClientTimeout(total=30)
-                            ) as response:
-                                if response.status == 200:
-                                    data = await response.json()
-                                    search_results = data.get("query", {}).get("search", [])
-                                    
-                                    for result in search_results:
-                                        if self._is_relevant_album_page(result, album_name, artist_name):
-                                            content = await self._extract_page_content({
-                                                "page_id": result["pageid"],
-                                                "title": result["title"]
-                                            })
-                                            if content:
-                                                content["content_type"] = "album_page"
-                                                album_pages.append(content)
-                                            break  # Take first relevant result
+                # Check rate limits
+                if not self.rate_limiter.can_make_request():
+                    await asyncio.sleep(2)
+                
+                try:
+                    params = {
+                        "action": "query",
+                        "list": "search",
+                        "srsearch": query,
+                        "srlimit": 3,
+                        "format": "json"
+                    }
                     
-                    except Exception as e:
-                        self.logger.error(f"Error searching for album {album_name}: {e}")
-                        continue
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            self.mediawiki_api,
+                            params=params,
+                            headers=self.headers,
+                            timeout=aiohttp.ClientTimeout(total=30)
+                        ) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                search_results = data.get("query", {}).get("search", [])
+                                
+                                for result in search_results:
+                                    if self._is_relevant_album_page(result, album_name, artist_name):
+                                        content = await self._extract_page_content({
+                                            "page_id": result["pageid"],
+                                            "title": result["title"]
+                                        })
+                                        if content:
+                                            content["content_type"] = "album_page"
+                                            album_pages.append(content)
+                                        break  # Take first relevant result
+                
+                except Exception as e:
+                    self.logger.error(f"Error searching for album {album_name}: {e}")
+                    continue
         
         return album_pages
     
@@ -354,41 +368,44 @@ class ArtistIndexMCPServer(BaseMCPServer):
             ]
             
             for query in search_queries:
-                async with self.rate_limiter:
-                    try:
-                        params = {
-                            "action": "query",
-                            "list": "search",
-                            "srsearch": query,
-                            "srlimit": 3,
-                            "format": "json"
-                        }
-                        
-                        async with aiohttp.ClientSession() as session:
-                            async with session.get(
-                                self.mediawiki_api,
-                                params=params,
-                                headers=self.headers,
-                                timeout=aiohttp.ClientTimeout(total=30)
-                            ) as response:
-                                if response.status == 200:
-                                    data = await response.json()
-                                    search_results = data.get("query", {}).get("search", [])
-                                    
-                                    for result in search_results:
-                                        if self._is_relevant_song_page(result, song_name, artist_name):
-                                            content = await self._extract_page_content({
-                                                "page_id": result["pageid"],
-                                                "title": result["title"]
-                                            })
-                                            if content:
-                                                content["content_type"] = "song_page"
-                                                song_pages.append(content)
-                                            break  # Take first relevant result
+                # Check rate limits
+                if not self.rate_limiter.can_make_request():
+                    await asyncio.sleep(2)
+                
+                try:
+                    params = {
+                        "action": "query",
+                        "list": "search",
+                        "srsearch": query,
+                        "srlimit": 3,
+                        "format": "json"
+                    }
                     
-                    except Exception as e:
-                        self.logger.error(f"Error searching for song {song_name}: {e}")
-                        continue
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            self.mediawiki_api,
+                            params=params,
+                            headers=self.headers,
+                            timeout=aiohttp.ClientTimeout(total=30)
+                        ) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                search_results = data.get("query", {}).get("search", [])
+                                
+                                for result in search_results:
+                                    if self._is_relevant_song_page(result, song_name, artist_name):
+                                        content = await self._extract_page_content({
+                                            "page_id": result["pageid"],
+                                            "title": result["title"]
+                                        })
+                                        if content:
+                                            content["content_type"] = "song_page"
+                                            song_pages.append(content)
+                                        break  # Take first relevant result
+                
+                except Exception as e:
+                    self.logger.error(f"Error searching for song {song_name}: {e}")
+                    continue
         
         return song_pages[:10]  # Limit to 10 songs
     
@@ -434,5 +451,15 @@ class ArtistIndexMCPServer(BaseMCPServer):
             confidence += 0.1
         
         return min(confidence, 1.0)
+    
+    def get_capabilities(self) -> List[str]:
+        """Get list of server capabilities."""
+        return [
+            "artist_indexing",
+            "wikipedia_extraction",
+            "album_discovery",
+            "song_discovery",
+            "content_validation"
+        ]
     
 
