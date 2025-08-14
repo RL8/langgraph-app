@@ -1,330 +1,254 @@
 """
-Artist Search MCP Server.
+Artist Search MCP Server
 
-This MCP server provides artist discovery functionality using Wikidata SPARQL queries.
-It can search for artists by name, filter by genre, era, and other criteria.
+Provides intelligent artist search using Wikidata SPARQL queries with fuzzy matching
+and confidence scoring. Focuses on finding likely matches for user-provided artist names.
 """
 
-import logging
-import urllib.parse
-from typing import Any, Dict, List, Optional
-from dataclasses import dataclass
+import asyncio
+import re
+from typing import Dict, List, Any, Optional
+from urllib.parse import quote
+
+import aiohttp
 
 from .base import BaseMCPServer, MCPConfig
 
-logger = logging.getLogger(__name__)
-
-
-@dataclass
-class ArtistSearchResult:
-    """Structured result for artist search."""
-    
-    wikidata_id: str
-    name: str
-    aliases: List[str]
-    description: Optional[str]
-    genres: List[str]
-    birth_date: Optional[str]
-    death_date: Optional[str]
-    country: Optional[str]
-    image_url: Optional[str]
-    wikipedia_url: Optional[str]
-    musicbrainz_id: Optional[str]
-    spotify_id: Optional[str]
-    confidence_score: float
-
 
 class ArtistSearchMCPServer(BaseMCPServer):
-    """MCP server for artist discovery using Wikidata."""
+    """MCP server for intelligent artist search using Wikidata."""
     
     def __init__(self, config: Optional[MCPConfig] = None):
         super().__init__(config or MCPConfig())
-        self.wikidata_endpoint = "https://query.wikidata.org/sparql"
+        self.wikidata_url = "https://query.wikidata.org/sparql"
+        self.headers = {
+            "User-Agent": "MusicApp/1.0 (https://github.com/your-repo; your-email@example.com)",
+            "Accept": "application/sparql-results+json"
+        }
     
-    def get_capabilities(self) -> List[str]:
-        """Get list of server capabilities."""
-        return [
-            "artist_search_by_name",
-            "artist_search_by_genre", 
-            "artist_search_by_era",
-            "artist_search_by_country",
-            "artist_details_by_id"
-        ]
-    
-    async def search(self, query: str, **kwargs) -> Dict[str, Any]:
-        """Search for artists using Wikidata SPARQL."""
-        search_type = kwargs.get("search_type", "name")
+    async def search(self, artist_name: str, search_options: Optional[Dict] = None) -> Dict[str, Any]:
+        """
+        Search for artists matching the provided name with confidence scoring.
         
-        # Check cache first
-        cache_key = self._get_cache_key("artist_search", query, search_type, **kwargs)
-        cached_result = self.cache.get(cache_key)
-        if cached_result:
-            return cached_result
-        
-        try:
-            if search_type == "name":
-                results = await self._search_by_name(query, **kwargs)
-            elif search_type == "genre":
-                results = await self._search_by_genre(query, **kwargs)
-            elif search_type == "era":
-                results = await self._search_by_era(query, **kwargs)
-
-            else:
-                raise ValueError(f"Unknown search type: {search_type}")
+        Args:
+            artist_name: The artist name to search for
+            search_options: Optional parameters for refinement
             
-            # Cache results
-            self.cache.set(cache_key, results)
-            return results
-            
-        except Exception as e:
-            logger.error(f"Artist search failed: {e}")
+        Returns:
+            Dictionary with search results and metadata
+        """
+        if not artist_name or not artist_name.strip():
             return {
-                "success": False,
-                "error": str(e),
-                "results": []
+                "results": [],
+                "total_results": 0,
+                "search_suggestions": ["Please provide an artist name"],
+                "error": "Artist name is required"
             }
-    
-    async def _search_by_name(self, name: str, limit: int = 10, 
-                            min_confidence: float = 0.5, **kwargs) -> Dict[str, Any]:
-        """Search for artists by name."""
-        sparql_query = """
-        SELECT DISTINCT ?artist ?artistLabel ?description ?birthDate ?deathDate ?country ?countryLabel ?image
-        WHERE {
-          ?artist wdt:P31 wd:Q5 ;  # Human
-                  wdt:P106 wd:Q639669 .  # Occupation: musician
-          
-          # Get labels
-          ?artist rdfs:label ?artistLabel .
-          FILTER(LANG(?artistLabel) = "en")
-          
-          # Name matching (exact or contains)
-          FILTER(CONTAINS(LCASE(?artistLabel), LCASE(?searchName)))
-          
-          # Get description
-          OPTIONAL { ?artist schema:description ?description . FILTER(LANG(?description) = "en") }
-          
-          # Get birth/death dates
-          OPTIONAL { ?artist wdt:P569 ?birthDate }
-          OPTIONAL { ?artist wdt:P570 ?deathDate }
-          
-          # Get country
-          OPTIONAL { ?artist wdt:P27 ?country . ?country rdfs:label ?countryLabel . FILTER(LANG(?countryLabel) = "en") }
-          
-          # Get images
-          OPTIONAL { ?artist wdt:P18 ?image }
-        }
-        ORDER BY DESC(?birthDate)
-        LIMIT ?limit
-        """
         
-        # Prepare query with direct substitution
-        query = sparql_query.replace("?searchName", f'"{name}"').replace("?limit", str(limit))
+        artist_name = artist_name.strip()
         
-        # Prepare parameters
-        params = {
-            "query": query,
-            "format": "json"
-        }
-        
-        # Make request
-        logger.debug(f"Making SPARQL request with query: {query[:200]}...")
-        data = await self._make_request(self.wikidata_endpoint, params=params)
-        
-        # Parse results
+        # Multi-step search strategy
         results = []
-        for binding in data.get("results", {}).get("bindings", []):
-            artist = self._parse_artist_binding(binding)
-            if artist.confidence_score >= min_confidence:
-                results.append(artist.__dict__)
+        
+        # Step 1: Exact name search
+        exact_results = await self._exact_name_search(artist_name)
+        results.extend(exact_results)
+        
+        # Step 2: Fuzzy name search (if no exact matches or few results)
+        if len(results) < 3:
+            fuzzy_results = await self._fuzzy_name_search(artist_name)
+            results.extend(fuzzy_results)
+        
+        # Step 3: Partial name search (if still few results)
+        if len(results) < 5:
+            partial_results = await self._partial_name_search(artist_name)
+            results.extend(partial_results)
+        
+        # Remove duplicates and rank by confidence
+        unique_results = self._deduplicate_results(results)
+        ranked_results = self._rank_results_by_confidence(unique_results)
+        
+        # Generate search suggestions
+        suggestions = self._generate_search_suggestions(artist_name, ranked_results)
         
         return {
-            "success": True,
-            "query": name,
-            "total_results": len(results),
-            "results": results
+            "results": ranked_results[:10],  # Limit to top 10
+            "total_results": len(ranked_results),
+            "search_suggestions": suggestions,
+            "search_term": artist_name
         }
     
-    async def _search_by_genre(self, genre: str, limit: int = 10, **kwargs) -> Dict[str, Any]:
-        """Search for artists by genre."""
-        sparql_query = """
-        SELECT DISTINCT ?artist ?artistLabel ?description ?birthDate ?deathDate ?country ?countryLabel ?image
+    async def _exact_name_search(self, artist_name: str) -> List[Dict]:
+        """Search for exact name matches."""
+        query = """
+        SELECT ?artist ?artistLabel ?description ?country ?image ?occupation ?birthYear ?deathYear
         WHERE {
-          ?artist wdt:P31 wd:Q5 ;  # Human
-                  wdt:P106 wd:Q639669 ;  # Occupation: musician
-                  wdt:P136 ?genre .  # Genre
-          
-          # Genre matching
-          ?genre rdfs:label ?genreLabel .
-          FILTER(LANG(?genreLabel) = "en")
-          FILTER(CONTAINS(LCASE(?genreLabel), LCASE('{genre}')))
-          
-          # Get labels
-          ?artist rdfs:label ?artistLabel .
-          FILTER(LANG(?artistLabel) = "en")
-          
-          # Get description
-          OPTIONAL { ?artist schema:description ?description . FILTER(LANG(?description) = "en") }
-          
-          # Get birth/death dates
-          OPTIONAL { ?artist wdt:P569 ?birthDate }
-          OPTIONAL { ?artist wdt:P570 ?deathDate }
-          
-          # Get country
-          OPTIONAL { ?artist wdt:P27 ?country . ?country rdfs:label ?countryLabel . FILTER(LANG(?countryLabel) = "en") }
-          
-          # Get images
-          OPTIONAL { ?artist wdt:P18 ?image }
+          ?artist wdt:P31 wd:Q5 .
+          ?artist ?label ?name .
+          FILTER(?name = "%s"@en)
+          OPTIONAL { ?artist wdt:P27 ?country . }
+          OPTIONAL { ?artist wdt:P18 ?image . }
+          OPTIONAL { ?artist wdt:P106 ?occupation . }
+          OPTIONAL { ?artist wdt:P569 ?birthDate . BIND(YEAR(?birthDate) AS ?birthYear) }
+          OPTIONAL { ?artist wdt:P570 ?deathDate . BIND(YEAR(?deathDate) AS ?deathYear) }
+          SERVICE wikibase:label { bd:serviceParam wikibase:language "en" . }
         }
-        ORDER BY DESC(?birthDate)
-        LIMIT {limit}
-        """
+        LIMIT 10
+        """ % artist_name
         
-        # Prepare query with direct substitution
-        query = sparql_query.replace("{genre}", genre).replace("{limit}", str(limit))
-        
-        # Prepare parameters
-        params = {
-            "query": query,
-            "format": "json"
-        }
-        
-        # Make request
-        logger.debug(f"Making genre SPARQL request with query: {query[:200]}...")
-        data = await self._make_request(self.wikidata_endpoint, params=params)
-        
-        # Parse results
-        results = []
-        for binding in data.get("results", {}).get("bindings", []):
-            artist = self._parse_artist_binding(binding)
-            results.append(artist.__dict__)
-        
-        return {
-            "success": True,
-            "query": genre,
-            "total_results": len(results),
-            "results": results
-        }
+        results = await self._execute_sparql_query(query)
+        return [self._process_result(r, "exact", 0.95) for r in results]
     
-    async def _search_by_era(self, era: str, limit: int = 10, **kwargs) -> Dict[str, Any]:
-        """Search for artists by era (decade, century, etc.)."""
-        # This is a simplified implementation - could be enhanced with more sophisticated era matching
-        sparql_query = """
-        SELECT DISTINCT ?artist ?artistLabel ?description ?birthDate ?deathDate ?country ?countryLabel ?image
+    async def _fuzzy_name_search(self, artist_name: str) -> List[Dict]:
+        """Search for fuzzy name matches using regex patterns."""
+        # Create regex pattern for fuzzy matching
+        words = artist_name.split()
+        if len(words) >= 2:
+            pattern = f"{words[0]}.*{words[-1]}"
+        else:
+            pattern = artist_name
+        
+        query = """
+        SELECT ?artist ?artistLabel ?description ?country ?image ?occupation ?birthYear ?deathYear
         WHERE {
-          ?artist wdt:P31 wd:Q5 ;  # Human
-                  wdt:P106 wd:Q639669 .  # Occupation: musician
-          
-          # Era filtering (simplified - could be enhanced)
-          ?artist wdt:P569 ?birthDate .
-          FILTER(YEAR(?birthDate) >= {start_year} && YEAR(?birthDate) <= {end_year})
-          
-          # Get labels
-          ?artist rdfs:label ?artistLabel .
-          FILTER(LANG(?artistLabel) = "en")
-          
-          # Get description
-          OPTIONAL { ?artist schema:description ?description . FILTER(LANG(?description) = "en") }
-          
-          # Get death date
-          OPTIONAL { ?artist wdt:P570 ?deathDate }
-          
-          # Get country
-          OPTIONAL { ?artist wdt:P27 ?country . ?country rdfs:label ?countryLabel . FILTER(LANG(?countryLabel) = "en") }
-          
-          # Get images
-          OPTIONAL { ?artist wdt:P18 ?image }
+          ?artist wdt:P31 wd:Q5 .
+          ?artist wdt:P106 wd:Q639669 .  # Musician
+          ?artist ?label ?name .
+          FILTER(REGEX(?name, "%s", "i"))
+          OPTIONAL { ?artist wdt:P27 ?country . }
+          OPTIONAL { ?artist wdt:P18 ?image . }
+          OPTIONAL { ?artist wdt:P106 ?occupation . }
+          OPTIONAL { ?artist wdt:P569 ?birthDate . BIND(YEAR(?birthDate) AS ?birthYear) }
+          OPTIONAL { ?artist wdt:P570 ?deathDate . BIND(YEAR(?deathDate) AS ?deathYear) }
+          SERVICE wikibase:label { bd:serviceParam wikibase:language "en" . }
         }
-        ORDER BY ?birthDate
-        LIMIT {limit}
-        """
+        LIMIT 10
+        """ % pattern
         
-        # Simple era mapping
-        era_mapping = {
-            "1960s": (1960, 1969),
-            "1970s": (1970, 1979),
-            "1980s": (1980, 1989),
-            "1990s": (1990, 1999),
-            "2000s": (2000, 2009),
-            "2010s": (2010, 2019),
-            "2020s": (2020, 2029),
-        }
-        
-        start_year, end_year = era_mapping.get(era.lower(), (1900, 2029))
-        
-        # Prepare query with direct substitution
-        query = sparql_query.replace("{start_year}", str(start_year)).replace("{end_year}", str(end_year)).replace("{limit}", str(limit))
-        
-        # Prepare parameters
-        params = {
-            "query": query,
-            "format": "json"
-        }
-        
-        # Make request
-        logger.debug(f"Making era SPARQL request with query: {query[:200]}...")
-        data = await self._make_request(self.wikidata_endpoint, params=params)
-        
-        # Parse results
-        results = []
-        for binding in data.get("results", {}).get("bindings", []):
-            artist = self._parse_artist_binding(binding)
-            results.append(artist.__dict__)
-        
-        return {
-            "success": True,
-            "query": era,
-            "total_results": len(results),
-            "results": results
-        }
+        results = await self._execute_sparql_query(query)
+        return [self._process_result(r, "fuzzy", 0.85) for r in results]
     
-
+    async def _partial_name_search(self, artist_name: str) -> List[Dict]:
+        """Search for partial name matches."""
+        query = """
+        SELECT ?artist ?artistLabel ?description ?country ?image ?occupation ?birthYear ?deathYear
+        WHERE {
+          ?artist wdt:P31 wd:Q5 .
+          ?artist wdt:P106 wd:Q639669 .  # Musician
+          ?artist ?label ?name .
+          FILTER(CONTAINS(LCASE(?name), LCASE("%s")))
+          OPTIONAL { ?artist wdt:P27 ?country . }
+          OPTIONAL { ?artist wdt:P18 ?image . }
+          OPTIONAL { ?artist wdt:P106 ?occupation . }
+          OPTIONAL { ?artist wdt:P569 ?birthDate . BIND(YEAR(?birthDate) AS ?birthYear) }
+          OPTIONAL { ?artist wdt:P570 ?deathDate . BIND(YEAR(?deathDate) AS ?deathYear) }
+          SERVICE wikibase:label { bd:serviceParam wikibase:language "en" . }
+        }
+        LIMIT 10
+        """ % artist_name
+        
+        results = await self._execute_sparql_query(query)
+        return [self._process_result(r, "partial", 0.70) for r in results]
     
-    def _parse_artist_binding(self, binding: Dict[str, Any]) -> ArtistSearchResult:
-        """Parse SPARQL binding into structured artist result."""
-        # Extract Wikidata ID
-        artist_uri = binding.get("artist", {}).get("value", "")
-        wikidata_id = artist_uri.split("/")[-1] if artist_uri else ""
+    async def _execute_sparql_query(self, query: str) -> List[Dict]:
+        """Execute SPARQL query with rate limiting and error handling."""
+        async with self.rate_limiter:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        self.wikidata_url,
+                        headers=self.headers,
+                        data={"query": query, "format": "json"},
+                        timeout=aiohttp.ClientTimeout(total=30)
+                    ) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            return data.get("results", {}).get("bindings", [])
+                        else:
+                            self.logger.error(f"SPARQL query failed: {response.status}")
+                            return []
+            except Exception as e:
+                self.logger.error(f"Error executing SPARQL query: {e}")
+                return []
+    
+    def _process_result(self, result: Dict, match_type: str, base_confidence: float) -> Dict:
+        """Process and score a single search result."""
+        # Extract basic information
+        artist_id = result.get("artist", {}).get("value", "").split("/")[-1]
+        name = result.get("artistLabel", {}).get("value", "")
+        description = result.get("description", {}).get("value", "")
+        country = result.get("country", {}).get("value", "")
+        image = result.get("image", {}).get("value", "")
+        birth_year = result.get("birthYear", {}).get("value", "")
+        death_year = result.get("deathYear", {}).get("value", "")
         
-        # Extract basic info
-        name = binding.get("artistLabel", {}).get("value", "")
-        description = binding.get("description", {}).get("value")
-        birth_date = binding.get("birthDate", {}).get("value")
-        death_date = binding.get("deathDate", {}).get("value")
-        
-        # Extract country
-        country = binding.get("countryLabel", {}).get("value")
-        
-        # Extract images and URLs
-        image_url = binding.get("image", {}).get("value")
-        
-        # For simplified query, we'll use empty lists for now
-        genres = []
-        aliases = []
-        wikipedia_url = None
-        musicbrainz_id = None
-        spotify_id = None
-        
-        # Calculate confidence score (simplified)
-        confidence_score = 0.5  # Base score
-        if description:
-            confidence_score += 0.2
-        if image_url:
-            confidence_score += 0.1
-        if country:
-            confidence_score += 0.1
-        
-        return ArtistSearchResult(
-            wikidata_id=wikidata_id,
-            name=name,
-            aliases=aliases,
-            description=description,
-            genres=genres,
-            birth_date=birth_date,
-            death_date=death_date,
-            country=country,
-            image_url=image_url,
-            wikipedia_url=wikipedia_url,
-            musicbrainz_id=musicbrainz_id,
-            spotify_id=spotify_id,
-            confidence_score=min(confidence_score, 1.0)
+        # Calculate confidence score
+        confidence = self._calculate_confidence(
+            base_confidence, name, description, country, image, birth_year
         )
+        
+        return {
+            "wikidata_id": artist_id,
+            "name": name,
+            "description": description,
+            "country": country,
+            "image_url": image,
+            "birth_year": birth_year,
+            "death_year": death_year,
+            "confidence": confidence,
+            "match_type": match_type
+        }
+    
+    def _calculate_confidence(self, base_confidence: float, name: str, 
+                            description: str, country: str, image: str, 
+                            birth_year: str) -> float:
+        """Calculate confidence score based on data completeness."""
+        confidence = base_confidence
+        
+        # Boost confidence for data completeness
+        if description:
+            confidence += 0.05
+        if country:
+            confidence += 0.03
+        if image:
+            confidence += 0.02
+        if birth_year:
+            confidence += 0.02
+        
+        # Cap confidence at 1.0
+        return min(confidence, 1.0)
+    
+    def _deduplicate_results(self, results: List[Dict]) -> List[Dict]:
+        """Remove duplicate results based on Wikidata ID."""
+        seen_ids = set()
+        unique_results = []
+        
+        for result in results:
+            artist_id = result.get("wikidata_id")
+            if artist_id and artist_id not in seen_ids:
+                seen_ids.add(artist_id)
+                unique_results.append(result)
+        
+        return unique_results
+    
+    def _rank_results_by_confidence(self, results: List[Dict]) -> List[Dict]:
+        """Sort results by confidence score (highest first)."""
+        return sorted(results, key=lambda x: x.get("confidence", 0), reverse=True)
+    
+    def _generate_search_suggestions(self, artist_name: str, results: List[Dict]) -> List[str]:
+        """Generate helpful search suggestions based on results."""
+        suggestions = []
+        
+        if not results:
+            suggestions.extend([
+                f"Try searching for '{artist_name}' with different spelling",
+                "Check if the artist name is correct",
+                "Try searching for just the first or last name"
+            ])
+        elif len(results) > 5:
+            suggestions.extend([
+                "Try adding more specific terms",
+                "Consider adding the artist's country or genre"
+            ])
+        
+        return suggestions

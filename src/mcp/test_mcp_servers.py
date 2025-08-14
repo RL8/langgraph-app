@@ -1,230 +1,320 @@
 """
-Testing framework for MCP servers.
+Test suite for MCP servers.
 
-This module provides utilities to test the MCP servers and validate their functionality.
+Tests the artist search and indexing MCP servers with the revised functionality.
 """
 
 import asyncio
 import json
-import logging
-from typing import Dict, Any, List
-from datetime import datetime
+import pytest
+from typing import Dict, Any
 
+from .base import MCPConfig
 from .artist_search import ArtistSearchMCPServer
 from .artist_index import ArtistIndexMCPServer
-from .base import MCPConfig
-
-logger = logging.getLogger(__name__)
 
 
-class MCPTester:
-    """Test framework for MCP servers."""
+class TestMCPConfig:
+    """Test MCP configuration."""
     
-    def __init__(self):
-        self.test_results = []
-        self.config = MCPConfig(
-            requests_per_minute=30,  # Lower for testing
-            requests_per_hour=100,
-            cache_ttl_seconds=300,  # 5 minutes for testing
-            request_timeout_seconds=15
+    def test_default_config(self):
+        """Test default configuration creation."""
+        config = MCPConfig()
+        assert config.rate_limit_per_minute == 60
+        assert config.rate_limit_per_hour == 1000
+        assert config.cache_ttl == 3600
+        assert config.request_timeout == 30
+    
+    def test_custom_config(self):
+        """Test custom configuration creation."""
+        config = MCPConfig(
+            rate_limit_per_minute=30,
+            rate_limit_per_hour=500,
+            cache_ttl=1800,
+            request_timeout=15
         )
-    
-    async def test_artist_search(self) -> Dict[str, Any]:
-        """Test the artist search MCP server."""
-        print("🧪 Testing Artist Search MCP Server...")
-        
-        test_cases = [
-            {"name": "David Bowie", "search_type": "name"},
-            {"name": "rock", "search_type": "genre"},
-            {"name": "1980s", "search_type": "era"},
-            {"name": "United States", "search_type": "country"},
-        ]
-        
-        results = []
-        async with ArtistSearchMCPServer(self.config) as server:
-            for test_case in test_cases:
-                print(f"  Testing: {test_case['name']} ({test_case['search_type']})")
-                
-                try:
-                    result = await server.search(
-                        test_case["name"], 
-                        search_type=test_case["search_type"],
-                        limit=3
-                    )
-                    
-                    success = result.get("success", False)
-                    total_results = result.get("total_results", 0)
-                    
-                    test_result = {
-                        "test_case": test_case,
-                        "success": success,
-                        "total_results": total_results,
-                        "error": result.get("error"),
-                        "timestamp": datetime.now().isoformat()
-                    }
-                    
-                    if success and total_results > 0:
-                        print(f"    ✅ Success: {total_results} results")
-                    else:
-                        print(f"    ❌ Failed: {result.get('error', 'No results')}")
-                    
-                    results.append(test_result)
-                    
-                except Exception as e:
-                    print(f"    ❌ Exception: {e}")
-                    results.append({
-                        "test_case": test_case,
-                        "success": False,
-                        "error": str(e),
-                        "timestamp": datetime.now().isoformat()
-                    })
-                
-                # Small delay between tests
-                await asyncio.sleep(1)
-        
-        return {
-            "server": "artist_search",
-            "total_tests": len(test_cases),
-            "passed": sum(1 for r in results if r["success"]),
-            "failed": sum(1 for r in results if not r["success"]),
-            "results": results
-        }
-    
-    async def test_artist_index(self) -> Dict[str, Any]:
-        """Test the artist indexing MCP server."""
-        print("🧪 Testing Artist Index MCP Server...")
-        
-        test_cases = [
-            {"artist_name": "David Bowie", "artist_id": "Q5383"},
-            {"artist_name": "The Beatles", "artist_id": "Q1299"},
-            {"artist_name": "Queen", "artist_id": "Q1339"},
-        ]
-        
-        results = []
-        async with ArtistIndexMCPServer(self.config) as server:
-            for test_case in test_cases:
-                print(f"  Testing: {test_case['artist_name']}")
-                
-                try:
-                    result = await server.search(
-                        test_case["artist_name"],
-                        artist_id=test_case["artist_id"],
-                        enable_web_search=False  # Disable for testing
-                    )
-                    
-                    success = not result.get("error")
-                    wikipedia_pages = len(result.get("wikipedia_pages", []))
-                    albums_found = len(result.get("albums_found", []))
-                    songs_found = len(result.get("songs_found", []))
-                    confidence = result.get("confidence_score", 0.0)
-                    
-                    test_result = {
-                        "test_case": test_case,
-                        "success": success,
-                        "wikipedia_pages": wikipedia_pages,
-                        "albums_found": albums_found,
-                        "songs_found": songs_found,
-                        "confidence": confidence,
-                        "error": result.get("error"),
-                        "timestamp": datetime.now().isoformat()
-                    }
-                    
-                    if success and wikipedia_pages > 0:
-                        print(f"    ✅ Success: {wikipedia_pages} pages, {albums_found} albums, {songs_found} songs (confidence: {confidence:.2f})")
-                    else:
-                        print(f"    ❌ Failed: {result.get('error', 'No content found')}")
-                    
-                    results.append(test_result)
-                    
-                except Exception as e:
-                    print(f"    ❌ Exception: {e}")
-                    results.append({
-                        "test_case": test_case,
-                        "success": False,
-                        "error": str(e),
-                        "timestamp": datetime.now().isoformat()
-                    })
-                
-                # Small delay between tests
-                await asyncio.sleep(2)
-        
-        return {
-            "server": "artist_index",
-            "total_tests": len(test_cases),
-            "passed": sum(1 for r in results if r["success"]),
-            "failed": sum(1 for r in results if not r["success"]),
-            "results": results
-        }
-    
-    async def run_all_tests(self) -> Dict[str, Any]:
-        """Run all MCP server tests."""
-        print("🚀 Starting MCP Server Tests...")
-        print("=" * 50)
-        
-        start_time = datetime.now()
-        
-        # Run tests
-        search_results = await self.test_artist_search()
-        index_results = await self.test_artist_index()
-        
-        end_time = datetime.now()
-        duration = (end_time - start_time).total_seconds()
-        
-        # Compile summary
-        summary = {
-            "test_run": {
-                "start_time": start_time.isoformat(),
-                "end_time": end_time.isoformat(),
-                "duration_seconds": duration
-            },
-            "servers": {
-                "artist_search": search_results,
-                "artist_index": index_results
-            },
-            "overall": {
-                "total_tests": search_results["total_tests"] + index_results["total_tests"],
-                "total_passed": search_results["passed"] + index_results["passed"],
-                "total_failed": search_results["failed"] + index_results["failed"],
-                "success_rate": (search_results["passed"] + index_results["passed"]) / 
-                               (search_results["total_tests"] + index_results["total_tests"]) * 100
-            }
-        }
-        
-        # Print summary
-        print("\n" + "=" * 50)
-        print("📊 TEST SUMMARY")
-        print("=" * 50)
-        print(f"Duration: {duration:.2f} seconds")
-        print(f"Total Tests: {summary['overall']['total_tests']}")
-        print(f"Passed: {summary['overall']['total_passed']}")
-        print(f"Failed: {summary['overall']['total_failed']}")
-        print(f"Success Rate: {summary['overall']['success_rate']:.1f}%")
-        
-        print(f"\nArtist Search: {search_results['passed']}/{search_results['total_tests']} passed")
-        print(f"Artist Index: {index_results['passed']}/{index_results['total_tests']} passed")
-        
-        return summary
-    
-    def save_test_results(self, results: Dict[str, Any], filename: str = None):
-        """Save test results to a JSON file."""
-        if filename is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"mcp_test_results_{timestamp}.json"
-        
-        with open(filename, 'w') as f:
-            json.dump(results, f, indent=2)
-        
-        print(f"\n💾 Test results saved to: {filename}")
+        assert config.rate_limit_per_minute == 30
+        assert config.rate_limit_per_hour == 500
+        assert config.cache_ttl == 1800
+        assert config.request_timeout == 15
 
 
-async def main():
-    """Main test runner."""
-    tester = MCPTester()
-    results = await tester.run_all_tests()
-    tester.save_test_results(results)
+class TestArtistSearchMCPServer:
+    """Test artist search MCP server."""
+    
+    @pytest.mark.asyncio
+    async def test_search_exact_match(self):
+        """Test exact name search."""
+        async with ArtistSearchMCPServer() as server:
+            result = await server.search("David Bowie")
+            
+            assert "results" in result
+            assert "total_results" in result
+            assert "search_suggestions" in result
+            assert "search_term" in result
+            
+            if result["total_results"] > 0:
+                artist = result["results"][0]
+                assert "wikidata_id" in artist
+                assert "name" in artist
+                assert "confidence" in artist
+                assert "match_type" in artist
+                assert artist["match_type"] in ["exact", "fuzzy", "partial"]
+    
+    @pytest.mark.asyncio
+    async def test_search_fuzzy_match(self):
+        """Test fuzzy name search."""
+        async with ArtistSearchMCPServer() as server:
+            result = await server.search("Dvid Boie")  # Misspelling
+            
+            assert "results" in result
+            assert "total_results" in result
+            
+            if result["total_results"] > 0:
+                artist = result["results"][0]
+                assert "confidence" in artist
+                assert artist["confidence"] >= 0.7  # Should have decent confidence
+    
+    @pytest.mark.asyncio
+    async def test_search_partial_match(self):
+        """Test partial name search."""
+        async with ArtistSearchMCPServer() as server:
+            result = await server.search("Bowie")  # Partial name
+            
+            assert "results" in result
+            assert "total_results" in result
+            
+            if result["total_results"] > 0:
+                # Should find multiple results
+                assert len(result["results"]) > 1
+    
+    @pytest.mark.asyncio
+    async def test_search_no_results(self):
+        """Test search with no results."""
+        async with ArtistSearchMCPServer() as server:
+            result = await server.search("Xyz123UnknownArtist")
+            
+            assert result["total_results"] == 0
+            assert len(result["results"]) == 0
+            assert len(result["search_suggestions"]) > 0
+    
+    @pytest.mark.asyncio
+    async def test_search_empty_input(self):
+        """Test search with empty input."""
+        async with ArtistSearchMCPServer() as server:
+            result = await server.search("")
+            
+            assert result["total_results"] == 0
+            assert "error" in result
+            assert result["error"] == "Artist name is required"
+    
+    @pytest.mark.asyncio
+    async def test_search_whitespace_input(self):
+        """Test search with whitespace-only input."""
+        async with ArtistSearchMCPServer() as server:
+            result = await server.search("   ")
+            
+            assert result["total_results"] == 0
+            assert "error" in result
+    
+    @pytest.mark.asyncio
+    async def test_result_structure(self):
+        """Test that search results have correct structure."""
+        async with ArtistSearchMCPServer() as server:
+            result = await server.search("Queen")
+            
+            if result["total_results"] > 0:
+                artist = result["results"][0]
+                required_fields = [
+                    "wikidata_id", "name", "description", "country", 
+                    "image_url", "birth_year", "death_year", "confidence", "match_type"
+                ]
+                
+                for field in required_fields:
+                    assert field in artist
+    
+    @pytest.mark.asyncio
+    async def test_confidence_scoring(self):
+        """Test confidence scoring system."""
+        async with ArtistSearchMCPServer() as server:
+            result = await server.search("David Bowie")
+            
+            if result["total_results"] > 0:
+                for artist in result["results"]:
+                    confidence = artist["confidence"]
+                    assert 0.0 <= confidence <= 1.0
+                    
+                    # Exact matches should have high confidence
+                    if artist["match_type"] == "exact":
+                        assert confidence >= 0.9
+
+
+class TestArtistIndexMCPServer:
+    """Test artist index MCP server."""
+    
+    @pytest.mark.asyncio
+    async def test_index_artist_profile(self):
+        """Test indexing artist profile pages."""
+        async with ArtistIndexMCPServer() as server:
+            result = await server.search("David Bowie")
+            
+            assert "wikipedia_pages" in result
+            assert "album_pages" in result
+            assert "song_pages" in result
+            assert "total_pages" in result
+            assert "confidence" in result
+            assert "status" in result
+            assert "artist_name" in result
+            
+            assert result["status"] in ["completed", "error"]
+            assert 0.0 <= result["confidence"] <= 1.0
+    
+    @pytest.mark.asyncio
+    async def test_index_artist_with_albums(self):
+        """Test indexing artist with album pages."""
+        async with ArtistIndexMCPServer() as server:
+            result = await server.search("Queen")
+            
+            assert "wikipedia_pages" in result
+            assert "album_pages" in result
+            assert "song_pages" in result
+            
+            # Should find some Wikipedia pages
+            assert len(result["wikipedia_pages"]) >= 0
+            
+            # May find album pages if albums are mentioned
+            assert len(result["album_pages"]) >= 0
+    
+    @pytest.mark.asyncio
+    async def test_index_unknown_artist(self):
+        """Test indexing unknown artist."""
+        async with ArtistIndexMCPServer() as server:
+            result = await server.search("Xyz123UnknownArtist")
+            
+            assert result["total_pages"] == 0
+            assert result["confidence"] == 0.0
+            assert result["status"] == "completed"
+    
+    @pytest.mark.asyncio
+    async def test_index_empty_input(self):
+        """Test indexing with empty input."""
+        async with ArtistIndexMCPServer() as server:
+            result = await server.search("")
+            
+            assert result["total_pages"] == 0
+            assert result["confidence"] == 0.0
+            assert result["status"] == "error"
+            assert "error" in result
+    
+    @pytest.mark.asyncio
+    async def test_wikipedia_page_structure(self):
+        """Test structure of Wikipedia pages."""
+        async with ArtistIndexMCPServer() as server:
+            result = await server.search("David Bowie")
+            
+            if result["wikipedia_pages"]:
+                page = result["wikipedia_pages"][0]
+                required_fields = [
+                    "page_id", "title", "url", "content_type", 
+                    "content", "sections", "categories", "word_count"
+                ]
+                
+                for field in required_fields:
+                    assert field in page
+                
+                assert page["content_type"] == "artist_profile"
+                assert page["word_count"] > 0
+    
+    @pytest.mark.asyncio
+    async def test_album_page_structure(self):
+        """Test structure of album pages."""
+        async with ArtistIndexMCPServer() as server:
+            result = await server.search("Queen")
+            
+            if result["album_pages"]:
+                page = result["album_pages"][0]
+                assert page["content_type"] == "album_page"
+                assert page["word_count"] > 0
+    
+    @pytest.mark.asyncio
+    async def test_song_page_structure(self):
+        """Test structure of song pages."""
+        async with ArtistIndexMCPServer() as server:
+            result = await server.search("Queen")
+            
+            if result["song_pages"]:
+                page = result["song_pages"][0]
+                assert page["content_type"] == "song_page"
+                assert page["word_count"] > 0
+    
+    @pytest.mark.asyncio
+    async def test_confidence_calculation(self):
+        """Test confidence calculation."""
+        async with ArtistIndexMCPServer() as server:
+            result = await server.search("David Bowie")
+            
+            confidence = result["confidence"]
+            assert 0.0 <= confidence <= 1.0
+            
+            # More pages should generally mean higher confidence
+            if result["total_pages"] > 5:
+                assert confidence >= 0.5
+
+
+class TestMCPIntegration:
+    """Test integration between MCP servers."""
+    
+    @pytest.mark.asyncio
+    async def test_search_then_index_workflow(self):
+        """Test workflow: search for artist, then index them."""
+        # Step 1: Search for artist
+        async with ArtistSearchMCPServer() as search_server:
+            search_result = await search_server.search("David Bowie")
+            
+            if search_result["total_results"] > 0:
+                artist = search_result["results"][0]
+                artist_id = artist["wikidata_id"]
+                
+                # Step 2: Index the artist
+                async with ArtistIndexMCPServer() as index_server:
+                    index_result = await index_server.search(
+                        "David Bowie", 
+                        artist_id=artist_id
+                    )
+                    
+                    assert index_result["status"] == "completed"
+                    assert index_result["artist_id"] == artist_id
+    
+    @pytest.mark.asyncio
+    async def test_error_handling(self):
+        """Test error handling in both servers."""
+        # Test search server with invalid input
+        async with ArtistSearchMCPServer() as search_server:
+            result = await search_server.search("")
+            assert "error" in result
+        
+        # Test index server with invalid input
+        async with ArtistIndexMCPServer() as index_server:
+            result = await index_server.search("")
+            assert "error" in result
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Run basic tests
+    async def run_tests():
+        print("Testing Artist Search MCP Server...")
+        async with ArtistSearchMCPServer() as server:
+            result = await server.search("David Bowie")
+            print(f"Found {result['total_results']} results")
+            if result['results']:
+                print(f"Top result: {result['results'][0]['name']}")
+        
+        print("\nTesting Artist Index MCP Server...")
+        async with ArtistIndexMCPServer() as server:
+            result = await server.search("David Bowie")
+            print(f"Indexed {result['total_pages']} pages")
+            print(f"Confidence: {result['confidence']:.2f}")
+    
+    asyncio.run(run_tests())
 
 

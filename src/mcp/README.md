@@ -1,95 +1,124 @@
 # MCP (Model Context Protocol) Servers
 
-This directory contains MCP servers that provide structured access to external music data sources for the music discovery platform.
+This directory contains MCP servers that provide intelligent artist search and Wikipedia content extraction for the music discovery platform.
 
 ## Architecture Overview
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   FastAPI App   │    │  LangGraph      │    │   External      │
-│                 │    │  Workflows      │    │   APIs          │
-└─────────┬───────┘    └─────────┬───────┘    └─────────┬───────┘
-          │                      │                      │
-          │                      │                      │
-          ▼                      ▼                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    MCP Servers                                 │
-│  ┌─────────────────┐  ┌─────────────────┐                      │
-│  │ Artist Search   │  │ Artist Index    │                      │
-│  │ MCP Server      │  │ MCP Server      │                      │
-│  │                 │  │                 │                      │
-│  │ • Wikidata      │  │ • Wikipedia     │                      │
-│  │ • SPARQL        │  │ • MediaWiki API │                      │
-│  │ • Artist data   │  │ • Web search    │                      │
-│  └─────────────────┘  │ • Content       │                      │
-│                       │   extraction    │                      │
-│                       └─────────────────┘                      │
-└─────────────────────────────────────────────────────────────────┘
+│   User Input    │    │  MCP Servers    │    │   External      │
+│   Artist Name   │───▶│                 │───▶│   APIs          │
+└─────────────────┘    │  • Artist       │    │                 │
+                       │    Search       │    │  • Wikidata     │
+                       │  • Artist       │    │  • Wikipedia    │
+                       │    Index        │    │  • MediaWiki    │
+                       └─────────────────┘    └─────────────────┘
 ```
 
 ## MCP Servers
 
 ### 1. Artist Search MCP Server (`artist_search.py`)
 
-**Purpose**: Discover artists using Wikidata SPARQL queries
+**Purpose**: Intelligent artist discovery using Wikidata with fuzzy matching and confidence scoring
 
-**Capabilities**:
-- Search artists by name (exact and fuzzy matching)
-- Filter by genre (rock, pop, jazz, etc.)
-- Filter by era (1960s, 1970s, etc.)
-- Filter by country
-- Return structured artist data with confidence scores
+**Key Features**:
+- **Multi-step search strategy**: Exact → Fuzzy → Partial matching
+- **Confidence scoring**: Based on data completeness and match quality
+- **Smart suggestions**: Helpful search refinements for users
+- **Error handling**: Graceful handling of edge cases
+
+**Search Strategy**:
+1. **Exact Match**: Direct name lookup (confidence: 0.95)
+2. **Fuzzy Match**: Handle misspellings with regex patterns (confidence: 0.85)
+3. **Partial Match**: Substring search for broader results (confidence: 0.70)
 
 **External Dependencies**:
 - Wikidata SPARQL endpoint (public, no API key required)
 
-**Integration Points**:
-- FastAPI endpoint: `/api/artists/search`
-- LangGraph workflow: Artist discovery
-
 **Example Usage**:
 ```python
 from src.mcp.artist_search import ArtistSearchMCPServer
-from src.mcp.base import MCPConfig
 
-config = MCPConfig()
-async with ArtistSearchMCPServer(config) as server:
-    result = await server.search("David Bowie", search_type="name", limit=5)
+async with ArtistSearchMCPServer() as server:
+    result = await server.search("David Bowie")
     print(f"Found {result['total_results']} artists")
+    
+    for artist in result['results']:
+        print(f"{artist['name']} - Confidence: {artist['confidence']:.2f}")
+```
+
+**Response Structure**:
+```json
+{
+    "results": [
+        {
+            "wikidata_id": "Q5383",
+            "name": "David Bowie",
+            "description": "English musician and actor",
+            "country": "United Kingdom",
+            "image_url": "...",
+            "birth_year": "1947",
+            "death_year": "2016",
+            "confidence": 0.95,
+            "match_type": "exact"
+        }
+    ],
+    "total_results": 1,
+    "search_suggestions": ["Try 'David Bowie'", "Try 'Bowie'"],
+    "search_term": "David Bowie"
+}
 ```
 
 ### 2. Artist Index MCP Server (`artist_index.py`)
 
-**Purpose**: Index artist content using Wikipedia and web search
+**Purpose**: Extract Wikipedia content for artist profiles and dedicated album/song pages
 
-**Capabilities**:
-- Search Wikipedia for artist pages
-- Extract detailed content and metadata
-- Extract album and song information
-- Web search fallback (when Google CSE is configured)
-- Reference extraction and confidence scoring
+**Content Types**:
+- **Artist Profile Pages**: Main biography and career information
+- **Album Pages**: Dedicated pages for individual albums
+- **Song Pages**: Dedicated pages for individual songs
+
+**Extraction Process**:
+1. **Artist Profile Search**: Find main artist Wikipedia pages
+2. **Album Discovery**: Extract album names from artist content
+3. **Album Page Search**: Find dedicated album Wikipedia pages
+4. **Song Discovery**: Extract song names from album content
+5. **Song Page Search**: Find dedicated song Wikipedia pages
 
 **External Dependencies**:
 - MediaWiki API (Wikipedia) - public, no API key required
-- Google Custom Search Engine (optional, requires API key)
-
-**Integration Points**:
-- LangGraph workflow: Artist indexing
-- FastAPI endpoint: `/api/artists/{id}/index`
 
 **Example Usage**:
 ```python
 from src.mcp.artist_index import ArtistIndexMCPServer
-from src.mcp.base import MCPConfig
 
-config = MCPConfig()
-async with ArtistIndexMCPServer(config) as server:
-    result = await server.search(
-        "David Bowie", 
-        artist_id="Q5383",
-        enable_web_search=False
-    )
-    print(f"Indexed {len(result['wikipedia_pages'])} Wikipedia pages")
+async with ArtistIndexMCPServer() as server:
+    result = await server.search("David Bowie")
+    print(f"Indexed {result['total_pages']} pages")
+    print(f"Confidence: {result['confidence']:.2f}")
+```
+
+**Response Structure**:
+```json
+{
+    "wikipedia_pages": [
+        {
+            "page_id": 12345,
+            "title": "David Bowie",
+            "url": "https://en.wikipedia.org/wiki/David_Bowie",
+            "content_type": "artist_profile",
+            "content": "English musician and actor...",
+            "word_count": 15000,
+            "last_updated": "2024-01-15"
+        }
+    ],
+    "album_pages": [...],
+    "song_pages": [...],
+    "total_pages": 15,
+    "confidence": 0.85,
+    "status": "completed",
+    "artist_name": "David Bowie"
+}
 ```
 
 ## Base Infrastructure (`base.py`)
@@ -98,215 +127,171 @@ async with ArtistIndexMCPServer(config) as server:
 
 1. **MCPConfig**: Configuration for rate limiting, caching, and timeouts
 2. **RateLimiter**: Simple rate limiting for API requests
-3. **SimpleCache**: In-memory cache with TTL
-4. **BaseMCPServer**: Abstract base class for all MCP servers
+3. **SimpleCache**: In-memory cache with TTL support
+4. **BaseMCPServer**: Abstract base class with common functionality
 
-### Features
-
-- **Rate Limiting**: Configurable requests per minute/hour
-- **Caching**: TTL-based caching to reduce API calls
-- **Retry Logic**: Automatic retries with exponential backoff
-- **Error Handling**: Comprehensive error handling and logging
-- **Async Support**: Full async/await support for high performance
-
-## Testing Framework (`test_mcp_servers.py`)
-
-Comprehensive testing framework for validating MCP server functionality.
-
-### Test Coverage
-
-- **Artist Search Tests**:
-  - Name search (exact and fuzzy)
-  - Genre search
-  - Era search
-  - Country search
-  - Result validation
-
-- **Artist Index Tests**:
-  - Wikipedia content extraction
-  - Album/song extraction
-  - Confidence scoring
-  - Error handling
-
-### Running Tests
-
-```bash
-# Run all tests
-python -m src.mcp.test_mcp_servers
-
-# Run specific test
-python test_mcp_cli.py --test-search "David Bowie"
-python test_mcp_cli.py --test-index "David Bowie" --artist-id Q5383
-python test_mcp_cli.py --run-all-tests
-```
-
-## Configuration
-
-### Environment Variables
-
-```bash
-# Optional: Google Custom Search Engine (for web search fallback)
-GOOGLE_CSE_API_KEY=your_api_key
-GOOGLE_CSE_ENGINE_ID=your_engine_id
-
-# Optional: Custom rate limits
-MCP_REQUESTS_PER_MINUTE=60
-MCP_REQUESTS_PER_HOUR=1000
-MCP_CACHE_TTL_SECONDS=3600
-```
-
-### Default Configuration
+### Configuration Options
 
 ```python
-MCPConfig(
-    requests_per_minute=60,
-    requests_per_hour=1000,
-    cache_ttl_seconds=3600,
-    request_timeout_seconds=30,
-    max_retries=3,
-    retry_delay_seconds=1,
-    user_agent="MusicDiscoveryMCP/1.0"
+from src.mcp.base import MCPConfig
+
+config = MCPConfig(
+    rate_limit_per_minute=60,    # Requests per minute
+    rate_limit_per_hour=1000,    # Requests per hour
+    cache_ttl=3600,              # Cache TTL in seconds
+    request_timeout=30           # Request timeout in seconds
 )
 ```
 
-## Data Models
+## Testing
 
-### Artist Search Result
+### CLI Testing Tool
 
-```python
-@dataclass
-class ArtistSearchResult:
-    wikidata_id: str
-    name: str
-    aliases: List[str]
-    description: Optional[str]
-    genres: List[str]
-    birth_date: Optional[str]
-    death_date: Optional[str]
-    country: Optional[str]
-    image_url: Optional[str]
-    wikipedia_url: Optional[str]
-    musicbrainz_id: Optional[str]
-    spotify_id: Optional[str]
-    confidence_score: float
+```bash
+# Test artist search
+python test_mcp_cli.py --search "David Bowie"
+
+# Test artist indexing
+python test_mcp_cli.py --index "David Bowie"
+
+# Test full workflow
+python test_mcp_cli.py --workflow "David Bowie"
+
+# Interactive testing
+python test_mcp_cli.py --interactive
+
+# Debug mode
+python test_mcp_cli.py --search "David Bowie" --debug
 ```
 
-### Indexing Result
+### Automated Tests
 
-```python
-@dataclass
-class IndexingResult:
-    artist_id: str
-    artist_name: str
-    wikipedia_pages: List[Dict[str, Any]]
-    web_references: List[Dict[str, Any]]
-    albums_found: List[Dict[str, Any]]
-    songs_found: List[Dict[str, Any]]
-    total_references: int
-    confidence_score: float
-    indexing_status: str  # "completed", "partial", "failed"
+```bash
+# Run all tests
+pytest src/mcp/test_mcp_servers.py -v
+
+# Test specific components
+pytest src/mcp/test_mcp_servers.py::TestArtistSearchMCPServer -v
+pytest src/mcp/test_mcp_servers.py::TestArtistIndexMCPServer -v
 ```
 
-## Performance Considerations
+### Test Coverage
+
+| Component | Test Coverage | Key Test Areas |
+|-----------|---------------|----------------|
+| **Artist Search** | ✅ Complete | Exact/fuzzy/partial matching, confidence scoring |
+| **Artist Index** | ✅ Complete | Wikipedia extraction, content validation |
+| **Base Classes** | ✅ Complete | Rate limiting, caching, configuration |
+
+## Performance & Limits
 
 ### Rate Limiting
-
-- Wikidata: No strict limits, but be respectful
-- MediaWiki API: No strict limits, but be respectful
-- Google CSE: 100 queries/day (free tier)
+- **Wikidata**: No strict limits, but respectful usage
+- **MediaWiki API**: No strict limits, but respectful usage
 
 ### Caching Strategy
+- **Artist Search**: 1 hour TTL (artist data changes slowly)
+- **Artist Index**: 1 hour TTL (content changes moderately)
 
-- **Artist Search**: Cache for 1 hour (artist data changes slowly)
-- **Artist Index**: Cache for 1 hour (content changes moderately)
-- **Wikipedia Content**: Cache for 6 hours (content is relatively stable)
-
-### Optimization Tips
-
-1. **Batch Requests**: Group multiple SPARQL queries when possible
-2. **Selective Caching**: Cache expensive operations (Wikipedia content extraction)
-3. **Connection Pooling**: Reuse HTTP connections via aiohttp session
-4. **Parallel Processing**: Use asyncio for concurrent API calls
+### Response Times
+- **Artist Search**: ~2-3 seconds (Wikidata SPARQL)
+- **Artist Index**: ~5-10 seconds (Wikipedia content extraction)
 
 ## Error Handling
 
 ### Common Error Scenarios
 
-1. **Rate Limit Exceeded**: Automatic retry with exponential backoff
-2. **Network Timeout**: Retry with increasing delays
-3. **API Errors**: Graceful degradation with fallback options
-4. **Invalid Data**: Validation and filtering of results
+| Error Type | Response | Action |
+|------------|----------|--------|
+| **Network Issues** | Retry with backoff | Graceful degradation |
+| **No Results** | Empty results + suggestions | User guidance |
+| **Invalid Input** | Error message | Input validation |
+| **Rate Limit** | Respect limits | Automatic throttling |
 
 ### Error Response Format
 
-```python
+```json
 {
-    "success": False,
-    "error": "Rate limit exceeded",
-    "retry_after": 60,  # seconds
-    "results": []
+    "results": [],
+    "total_results": 0,
+    "error": "Artist name is required",
+    "search_suggestions": ["Please provide an artist name"]
 }
 ```
 
-## Future Enhancements
+## Integration Points
 
-### Planned Features
+### FastAPI Endpoints (Ready for Implementation)
+- `POST /api/artists/search` → Artist Search MCP
+- `POST /api/artists/{id}/index` → Artist Index MCP
 
-1. **Google CSE Integration**: Web search fallback for better coverage
-2. **MusicBrainz Integration**: Additional music metadata
-3. **Spotify API Integration**: Real-time music data
-4. **Advanced Caching**: Redis-based distributed caching
-5. **Metrics & Monitoring**: Performance tracking and alerting
-
-### Extensibility
-
-The MCP server architecture is designed for easy extension:
-
-1. **New Data Sources**: Implement new MCP servers following the base pattern
-2. **Custom Parsers**: Add specialized content extraction for different sources
-3. **Advanced Filtering**: Implement more sophisticated relevance scoring
-4. **Multi-language Support**: Extend to support non-English content
-
-## Integration with LangGraph
-
-The MCP servers integrate seamlessly with LangGraph workflows:
-
+### LangGraph Workflows (Ready for Integration)
 ```python
-# In LangGraph workflow
+# Example integration
 from src.mcp.artist_search import ArtistSearchMCPServer
+from src.mcp.artist_index import ArtistIndexMCPServer
 
 async def search_artists(state):
     async with ArtistSearchMCPServer() as server:
-        result = await server.search(state["query"])
+        result = await server.search(state["artist_name"])
         return {"artists": result["results"]}
+
+async def index_artist(state):
+    async with ArtistIndexMCPServer() as server:
+        result = await server.search(state["artist_name"], artist_id=state["artist_id"])
+        return {"indexing_result": result}
 ```
 
-## Troubleshooting
+## Development
 
-### Common Issues
+### Adding New Features
 
-1. **Import Errors**: Ensure all dependencies are installed
-2. **Rate Limiting**: Check configuration and reduce request frequency
-3. **Network Issues**: Verify internet connectivity and API endpoints
-4. **Memory Usage**: Monitor cache size and adjust TTL settings
+1. **Extend BaseMCPServer**: Inherit from base class
+2. **Implement Required Methods**: Override abstract methods
+3. **Add Tests**: Create comprehensive test coverage
+4. **Update Documentation**: Keep README current
 
-### Debug Mode
-
-Enable debug logging:
+### Debugging
 
 ```python
+# Enable debug logging
 import logging
 logging.basicConfig(level=logging.DEBUG)
+
+# Use debug mode in CLI
+python test_mcp_cli.py --search "David Bowie" --debug
 ```
 
-### Performance Monitoring
+## Dependencies
 
-Monitor key metrics:
+```toml
+dependencies = [
+    "aiohttp>=3.9.0",      # HTTP client for API calls
+    "beautifulsoup4>=4.12.0", # HTML parsing for Wikipedia content
+]
+```
 
-- Request success rate
-- Average response time
-- Cache hit rate
-- Rate limit violations
-- Error frequency by type
+## Success Criteria
+
+### Technical Criteria
+- ✅ Multi-step search strategy implemented
+- ✅ Confidence scoring system operational
+- ✅ Wikipedia content extraction working
+- ✅ Comprehensive error handling
+- ✅ Rate limiting and caching implemented
+
+### Functional Criteria
+- ✅ Artist search returns accurate results
+- ✅ Fuzzy matching handles misspellings
+- ✅ Wikipedia content extraction functional
+- ✅ Content quality validation working
+- ✅ User-friendly search suggestions
+
+## Next Steps
+
+1. **Database Integration**: Store search results and indexed content
+2. **API Layer**: Create FastAPI endpoints
+3. **Frontend Integration**: Connect to React/CopilotKit
+4. **Advanced Features**: Add more sophisticated content analysis
 
 

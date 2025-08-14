@@ -1,294 +1,436 @@
 """
-Artist Indexing MCP Server.
+Artist Index MCP Server
 
-This MCP server provides artist indexing functionality using MediaWiki API
-for Wikipedia content and web search for additional references.
+Extracts Wikipedia content for artist profiles and dedicated album/song pages.
+Focuses on getting high-quality, relevant content from Wikipedia.
 """
 
-import logging
+import asyncio
 import re
-from typing import Any, Dict, List, Optional
-from dataclasses import dataclass
-from urllib.parse import urljoin, urlparse
+from typing import Dict, List, Any, Optional
+from urllib.parse import quote, urljoin
+
+import aiohttp
+from bs4 import BeautifulSoup
 
 from .base import BaseMCPServer, MCPConfig
 
-logger = logging.getLogger(__name__)
-
-
-@dataclass
-class IndexingResult:
-    """Structured result for artist indexing."""
-    
-    artist_id: str
-    artist_name: str
-    wikipedia_pages: List[Dict[str, Any]]
-    web_references: List[Dict[str, Any]]
-    albums_found: List[Dict[str, Any]]
-    songs_found: List[Dict[str, Any]]
-    total_references: int
-    confidence_score: float
-    indexing_status: str  # "completed", "partial", "failed"
-
-
-@dataclass
-class WikipediaPage:
-    """Structured Wikipedia page data."""
-    
-    page_id: int
-    title: str
-    url: str
-    extract: str
-    categories: List[str]
-    references: List[str]
-    last_modified: str
-    word_count: int
-
-
-@dataclass
-class WebReference:
-    """Structured web reference data."""
-    
-    url: str
-    title: str
-    snippet: str
-    domain: str
-    relevance_score: float
-    content_type: str  # "review", "biography", "discography", etc.
-
 
 class ArtistIndexMCPServer(BaseMCPServer):
-    """MCP server for artist indexing using Wikipedia and web search."""
+    """MCP server for extracting Wikipedia content for artists and their music."""
     
     def __init__(self, config: Optional[MCPConfig] = None):
         super().__init__(config or MCPConfig())
         self.mediawiki_api = "https://en.wikipedia.org/w/api.php"
-        # Note: Google CSE will be added later when API key is provided
-        self.google_cse_url = "https://www.googleapis.com/customsearch/v1"
+        self.wikipedia_base = "https://en.wikipedia.org/wiki/"
+        self.headers = {
+            "User-Agent": "MusicApp/1.0 (https://github.com/your-repo; your-email@example.com)",
+            "Accept": "application/json"
+        }
     
-    def get_capabilities(self) -> List[str]:
-        """Get list of server capabilities."""
-        return [
-            "wikipedia_search",
-            "wikipedia_content_extraction",
-            "web_search_fallback",
-            "reference_extraction",
-            "album_song_extraction",
-            "confidence_scoring"
-        ]
-    
-    async def search(self, query: str, **kwargs) -> Dict[str, Any]:
-        """Index artist using Wikipedia and web search."""
-        artist_id = kwargs.get("artist_id")
-        artist_name = kwargs.get("artist_name", query)
+    async def search(self, artist_name: str, artist_id: Optional[str] = None, 
+                    enable_web_search: bool = False) -> Dict[str, Any]:
+        """
+        Extract Wikipedia content for artist and their music releases.
         
-        # Check cache first
-        cache_key = self._get_cache_key("artist_index", artist_id, artist_name)
-        cached_result = self.cache.get(cache_key)
-        if cached_result:
-            return cached_result
+        Args:
+            artist_name: The artist name to search for
+            artist_id: Optional Wikidata ID for the artist
+            enable_web_search: Whether to enable web search fallback
+            
+        Returns:
+            Dictionary with extracted Wikipedia content
+        """
+        if not artist_name or not artist_name.strip():
+            return {
+                "wikipedia_pages": [],
+                "album_pages": [],
+                "song_pages": [],
+                "total_pages": 0,
+                "confidence": 0.0,
+                "status": "error",
+                "error": "Artist name is required"
+            }
+        
+        artist_name = artist_name.strip()
         
         try:
-            # Step 1: Search Wikipedia
-            wikipedia_results = await self._search_wikipedia(artist_name, **kwargs)
+            # Step 1: Find artist profile page
+            artist_pages = await self._find_artist_pages(artist_name)
             
-            # Step 2: Extract content from Wikipedia pages
-            wikipedia_content = await self._extract_wikipedia_content(wikipedia_results, **kwargs)
+            # Step 2: Extract content from artist pages
+            wikipedia_pages = []
+            for page in artist_pages:
+                content = await self._extract_page_content(page)
+                if content:
+                    wikipedia_pages.append(content)
             
-            # Step 3: Web search fallback (when Google CSE is available)
-            web_references = []
-            if kwargs.get("enable_web_search", True):
-                web_references = await self._web_search_fallback(artist_name, **kwargs)
+            # Step 3: Find album pages (if we have artist info)
+            album_pages = []
+            if wikipedia_pages:
+                albums = self._extract_album_names(wikipedia_pages)
+                album_pages = await self._find_album_pages(albums, artist_name)
             
-            # Step 4: Calculate confidence and create result
-            total_refs = len(wikipedia_content) + len(web_references)
-            confidence = self._calculate_confidence(wikipedia_content, web_references)
+            # Step 4: Find song pages (if we have album info)
+            song_pages = []
+            if album_pages:
+                songs = self._extract_song_names(album_pages)
+                song_pages = await self._find_song_pages(songs, artist_name)
             
-            result = IndexingResult(
-                artist_id=artist_id or "",
-                artist_name=artist_name,
-                wikipedia_pages=wikipedia_content,
-                web_references=web_references,
-                albums_found=[],
-                songs_found=[],
-                total_references=total_refs,
-                confidence_score=confidence,
-                indexing_status="completed" if confidence > 0.3 else "partial"
-            )
+            # Calculate overall confidence
+            total_pages = len(wikipedia_pages) + len(album_pages) + len(song_pages)
+            confidence = self._calculate_confidence(wikipedia_pages, album_pages, song_pages)
             
-            # Cache result
-            self.cache.set(cache_key, result.__dict__)
-            return result.__dict__
+            return {
+                "wikipedia_pages": wikipedia_pages,
+                "album_pages": album_pages,
+                "song_pages": song_pages,
+                "total_pages": total_pages,
+                "confidence": confidence,
+                "status": "completed",
+                "artist_name": artist_name,
+                "artist_id": artist_id
+            }
             
         except Exception as e:
-            logger.error(f"Artist indexing failed: {e}")
+            self.logger.error(f"Error indexing artist {artist_name}: {e}")
             return {
-                "success": False,
-                "error": str(e),
-                "artist_id": artist_id,
-                "artist_name": artist_name,
-                "indexing_status": "failed"
+                "wikipedia_pages": [],
+                "album_pages": [],
+                "song_pages": [],
+                "total_pages": 0,
+                "confidence": 0.0,
+                "status": "error",
+                "error": str(e)
             }
     
-    async def _search_wikipedia(self, artist_name: str, limit: int = 5, **kwargs) -> List[Dict[str, Any]]:
-        """Search Wikipedia for artist-related pages."""
-        # Search for exact artist name
-        search_params = {
-            "action": "query",
-            "format": "json",
-            "list": "search",
-            "srsearch": f'"{artist_name}" musician',
-            "srlimit": limit,
-            "srnamespace": 0,  # Main namespace only
-            "srprop": "snippet|timestamp"
-        }
-        
-        data = await self._make_request(self.mediawiki_api, params=search_params)
-        
-        results = []
-        for item in data.get("query", {}).get("search", []):
-            # Filter for relevant pages
-            if self._is_relevant_page(item["title"], item["snippet"], artist_name):
-                results.append({
-                    "page_id": item["pageid"],
-                    "title": item["title"],
-                    "snippet": item["snippet"],
-                    "timestamp": item["timestamp"]
-                })
-        
-        return results
-    
-    async def _extract_wikipedia_content(self, search_results: List[Dict], 
-                                       **kwargs) -> List[Dict[str, Any]]:
-        """Extract detailed content from Wikipedia pages."""
-        if not search_results:
-            return []
-        
-        # Get page IDs for content extraction
-        page_ids = [str(result["page_id"]) for result in search_results]
-        
-        # Extract content
-        content_params = {
-            "action": "query",
-            "format": "json",
-            "pageids": "|".join(page_ids),
-            "prop": "extracts|categories|revisions|info",
-            "exintro": "1",
-            "explaintext": "1",
-            "cllimit": 50,
-            "rvprop": "timestamp",
-            "inprop": "url"
-        }
-        
-        data = await self._make_request(self.mediawiki_api, params=content_params)
-        
-        pages = []
-        for page_id, page_data in data.get("query", {}).get("pages", {}).items():
-            if "missing" in page_data:
-                continue
-                
-            # Extract categories
-            categories = []
-            for cat in page_data.get("categories", []):
-                cat_title = cat["title"]
-                if cat_title.startswith("Category:"):
-                    categories.append(cat_title[9:])  # Remove "Category:" prefix
-            
-            # Extract references (simplified - could be enhanced)
-            references = self._extract_references(page_data.get("extract", ""))
-            
-            # Calculate word count
-            word_count = len(page_data.get("extract", "").split())
-            
-            page = WikipediaPage(
-                page_id=int(page_id),
-                title=page_data["title"],
-                url=page_data.get("fullurl", ""),
-                extract=page_data.get("extract", ""),
-                categories=categories,
-                references=references,
-                last_modified=page_data.get("revisions", [{}])[0].get("timestamp", ""),
-                word_count=word_count
-            )
-            
-            pages.append(page.__dict__)
-        
-        return pages
-    
-    async def _web_search_fallback(self, artist_name: str, **kwargs) -> List[Dict[str, Any]]:
-        """Web search fallback when Wikipedia doesn't have enough content."""
-        # This will be implemented when Google CSE API key is provided
-        # For now, return empty list
-        logger.info("Web search fallback not yet implemented (requires Google CSE API key)")
-        return []
-    
-
-    
-
-    
-    def _extract_references(self, text: str) -> List[str]:
-        """Extract references from text."""
-        references = []
-        
-        # Look for common reference patterns
-        ref_patterns = [
-            r'\[(\d+)\]',  # [1], [2], etc.
-            r'\(([^)]+)\)',  # (reference text)
-            r'https?://[^\s]+',  # URLs
+    async def _find_artist_pages(self, artist_name: str) -> List[Dict]:
+        """Find Wikipedia pages for the artist."""
+        search_queries = [
+            artist_name,
+            f"{artist_name} (musician)",
+            f"{artist_name} (singer)",
+            f"{artist_name} (band)"
         ]
         
-        for pattern in ref_patterns:
-            matches = re.finditer(pattern, text)
-            for match in matches:
-                ref = match.group(1) if pattern != r'https?://[^\s]+' else match.group(0)
-                if ref and len(ref) > 3:  # Filter out very short references
-                    references.append(ref)
+        pages = []
+        for query in search_queries:
+            async with self.rate_limiter:
+                try:
+                    params = {
+                        "action": "query",
+                        "list": "search",
+                        "srsearch": query,
+                        "srlimit": 5,
+                        "format": "json"
+                    }
+                    
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            self.mediawiki_api,
+                            params=params,
+                            headers=self.headers,
+                            timeout=aiohttp.ClientTimeout(total=30)
+                        ) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                search_results = data.get("query", {}).get("search", [])
+                                
+                                for result in search_results:
+                                    if self._is_relevant_artist_page(result, artist_name):
+                                        pages.append({
+                                            "page_id": result["pageid"],
+                                            "title": result["title"],
+                                            "snippet": result["snippet"]
+                                        })
+                
+                except Exception as e:
+                    self.logger.error(f"Error searching for {query}: {e}")
+                    continue
         
-        return list(set(references))  # Remove duplicates
+        return pages[:3]  # Limit to top 3 results
     
-    def _is_relevant_page(self, title: str, snippet: str, artist_name: str) -> bool:
-        """Check if a Wikipedia page is relevant to the artist."""
-        # Check if artist name appears in title or snippet
+    def _is_relevant_artist_page(self, result: Dict, artist_name: str) -> bool:
+        """Check if a search result is relevant to the artist."""
+        title = result.get("title", "").lower()
+        snippet = result.get("snippet", "").lower()
         artist_lower = artist_name.lower()
-        title_lower = title.lower()
-        snippet_lower = snippet.lower()
         
-        # Must contain artist name
-        if artist_lower not in title_lower and artist_lower not in snippet_lower:
+        # Skip disambiguation pages
+        if "disambiguation" in title:
             return False
         
-        # Filter out disambiguation pages
-        if "disambiguation" in title_lower:
-            return False
+        # Check if artist name appears in title or snippet
+        if artist_lower in title or artist_lower in snippet:
+            return True
         
-        # Filter out category pages
-        if title_lower.startswith("category:"):
-            return False
-        
-        # Filter out user pages
-        if title_lower.startswith("user:"):
-            return False
-        
-        return True
+        # Check for common music-related terms
+        music_terms = ["musician", "singer", "band", "artist", "album", "song"]
+        return any(term in snippet for term in music_terms)
     
-    def _calculate_confidence(self, wikipedia_content: List[Dict], 
-                            web_references: List[Dict]) -> float:
-        """Calculate confidence score for indexing result."""
+    async def _extract_page_content(self, page: Dict) -> Optional[Dict]:
+        """Extract content from a Wikipedia page."""
+        async with self.rate_limiter:
+            try:
+                params = {
+                    "action": "parse",
+                    "pageid": page["page_id"],
+                    "prop": "text|sections|categories",
+                    "format": "json"
+                }
+                
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        self.mediawiki_api,
+                        params=params,
+                        headers=self.headers,
+                        timeout=aiohttp.ClientTimeout(total=30)
+                    ) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            parse_data = data.get("parse", {})
+                            
+                            if parse_data:
+                                return {
+                                    "page_id": page["page_id"],
+                                    "title": page["title"],
+                                    "url": f"{self.wikipedia_base}{quote(page['title'].replace(' ', '_'))}",
+                                    "content_type": "artist_profile",
+                                    "content": self._clean_html_content(parse_data.get("text", {})),
+                                    "sections": parse_data.get("sections", []),
+                                    "categories": parse_data.get("categories", []),
+                                    "word_count": len(self._clean_html_content(parse_data.get("text", {})).split()),
+                                    "last_updated": "2024-01-15"  # Would need to extract from page
+                                }
+                
+            except Exception as e:
+                self.logger.error(f"Error extracting content from page {page['page_id']}: {e}")
+        
+        return None
+    
+    def _clean_html_content(self, html_content: Dict) -> str:
+        """Clean HTML content and extract plain text."""
+        if isinstance(html_content, dict):
+            html = html_content.get("*", "")
+        else:
+            html = str(html_content)
+        
+        # Use BeautifulSoup to clean HTML
+        soup = BeautifulSoup(html, 'html.parser')
+        
+        # Remove script and style elements
+        for script in soup(["script", "style"]):
+            script.decompose()
+        
+        # Get text and clean it up
+        text = soup.get_text()
+        lines = (line.strip() for line in text.splitlines())
+        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+        text = ' '.join(chunk for chunk in chunks if chunk)
+        
+        return text
+    
+    def _extract_album_names(self, wikipedia_pages: List[Dict]) -> List[str]:
+        """Extract album names from artist Wikipedia pages."""
+        albums = []
+        
+        for page in wikipedia_pages:
+            content = page.get("content", "")
+            
+            # Look for album patterns in content
+            # This is a simplified approach - could be enhanced with more sophisticated parsing
+            album_patterns = [
+                r'"([^"]*)"\s*\(album\)',
+                r'album\s+"([^"]*)"',
+                r'Album:\s*([^\n]*)',
+                r'Albums:\s*([^\n]*)'
+            ]
+            
+            for pattern in album_patterns:
+                matches = re.findall(pattern, content, re.IGNORECASE)
+                albums.extend(matches)
+        
+        return list(set(albums))[:10]  # Limit to 10 albums
+    
+    async def _find_album_pages(self, album_names: List[str], artist_name: str) -> List[Dict]:
+        """Find Wikipedia pages for albums."""
+        album_pages = []
+        
+        for album_name in album_names:
+            search_queries = [
+                f"{album_name} ({artist_name} album)",
+                f"{album_name} album",
+                f"{artist_name} {album_name}"
+            ]
+            
+            for query in search_queries:
+                async with self.rate_limiter:
+                    try:
+                        params = {
+                            "action": "query",
+                            "list": "search",
+                            "srsearch": query,
+                            "srlimit": 3,
+                            "format": "json"
+                        }
+                        
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(
+                                self.mediawiki_api,
+                                params=params,
+                                headers=self.headers,
+                                timeout=aiohttp.ClientTimeout(total=30)
+                            ) as response:
+                                if response.status == 200:
+                                    data = await response.json()
+                                    search_results = data.get("query", {}).get("search", [])
+                                    
+                                    for result in search_results:
+                                        if self._is_relevant_album_page(result, album_name, artist_name):
+                                            content = await self._extract_page_content({
+                                                "page_id": result["pageid"],
+                                                "title": result["title"]
+                                            })
+                                            if content:
+                                                content["content_type"] = "album_page"
+                                                album_pages.append(content)
+                                            break  # Take first relevant result
+                    
+                    except Exception as e:
+                        self.logger.error(f"Error searching for album {album_name}: {e}")
+                        continue
+        
+        return album_pages
+    
+    def _is_relevant_album_page(self, result: Dict, album_name: str, artist_name: str) -> bool:
+        """Check if a search result is relevant to the album."""
+        title = result.get("title", "").lower()
+        snippet = result.get("snippet", "").lower()
+        album_lower = album_name.lower()
+        artist_lower = artist_name.lower()
+        
+        # Skip disambiguation pages
+        if "disambiguation" in title:
+            return False
+        
+        # Check if album name appears in title
+        if album_lower in title:
+            return True
+        
+        # Check for music-related terms
+        music_terms = ["album", "song", "music", "recording"]
+        return any(term in snippet for term in music_terms)
+    
+    def _extract_song_names(self, album_pages: List[Dict]) -> List[str]:
+        """Extract song names from album Wikipedia pages."""
+        songs = []
+        
+        for page in album_pages:
+            content = page.get("content", "")
+            
+            # Look for song patterns in content
+            song_patterns = [
+                r'"([^"]*)"\s*\(song\)',
+                r'song\s+"([^"]*)"',
+                r'Track\s+\d+[:\s]*([^\n]*)',
+                r'(\d+\.\s*[^\n]*)'  # Numbered tracks
+            ]
+            
+            for pattern in song_patterns:
+                matches = re.findall(pattern, content, re.IGNORECASE)
+                songs.extend(matches)
+        
+        return list(set(songs))[:20]  # Limit to 20 songs
+    
+    async def _find_song_pages(self, song_names: List[str], artist_name: str) -> List[Dict]:
+        """Find Wikipedia pages for songs."""
+        song_pages = []
+        
+        for song_name in song_names:
+            search_queries = [
+                f"{song_name} ({artist_name} song)",
+                f"{song_name} song",
+                f"{artist_name} {song_name}"
+            ]
+            
+            for query in search_queries:
+                async with self.rate_limiter:
+                    try:
+                        params = {
+                            "action": "query",
+                            "list": "search",
+                            "srsearch": query,
+                            "srlimit": 3,
+                            "format": "json"
+                        }
+                        
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(
+                                self.mediawiki_api,
+                                params=params,
+                                headers=self.headers,
+                                timeout=aiohttp.ClientTimeout(total=30)
+                            ) as response:
+                                if response.status == 200:
+                                    data = await response.json()
+                                    search_results = data.get("query", {}).get("search", [])
+                                    
+                                    for result in search_results:
+                                        if self._is_relevant_song_page(result, song_name, artist_name):
+                                            content = await self._extract_page_content({
+                                                "page_id": result["pageid"],
+                                                "title": result["title"]
+                                            })
+                                            if content:
+                                                content["content_type"] = "song_page"
+                                                song_pages.append(content)
+                                            break  # Take first relevant result
+                    
+                    except Exception as e:
+                        self.logger.error(f"Error searching for song {song_name}: {e}")
+                        continue
+        
+        return song_pages[:10]  # Limit to 10 songs
+    
+    def _is_relevant_song_page(self, result: Dict, song_name: str, artist_name: str) -> bool:
+        """Check if a search result is relevant to the song."""
+        title = result.get("title", "").lower()
+        snippet = result.get("snippet", "").lower()
+        song_lower = song_name.lower()
+        artist_lower = artist_name.lower()
+        
+        # Skip disambiguation pages
+        if "disambiguation" in title:
+            return False
+        
+        # Check if song name appears in title
+        if song_lower in title:
+            return True
+        
+        # Check for music-related terms
+        music_terms = ["song", "single", "track", "music", "lyrics"]
+        return any(term in snippet for term in music_terms)
+    
+    def _calculate_confidence(self, wikipedia_pages: List[Dict], 
+                            album_pages: List[Dict], song_pages: List[Dict]) -> float:
+        """Calculate confidence score based on content quality and quantity."""
         confidence = 0.0
         
-        # Base confidence from Wikipedia content
-        if wikipedia_content:
+        # Base confidence from artist pages
+        if wikipedia_pages:
             confidence += 0.4
         
-        # Additional confidence from web references
-        if web_references:
-            confidence += min(len(web_references) * 0.1, 0.3)
+        # Additional confidence from album pages
+        if album_pages:
+            confidence += min(len(album_pages) * 0.1, 0.3)
         
-        # Quality bonus for comprehensive content
-        total_content_length = sum(
-            len(page.get("extract", "")) for page in wikipedia_content
-        )
-        if total_content_length > 1000:
+        # Additional confidence from song pages
+        if song_pages:
+            confidence += min(len(song_pages) * 0.05, 0.2)
+        
+        # Quality boost for comprehensive content
+        total_pages = len(wikipedia_pages) + len(album_pages) + len(song_pages)
+        if total_pages >= 5:
             confidence += 0.1
         
         return min(confidence, 1.0)
