@@ -1,0 +1,400 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_date": "2025-01-14T12:00:00.000Z",
+  "__export_source": "insomnia.desktop.app:v2023.5.8",
+  "resources": [
+    {
+      "_id": "req_root",
+      "parentId": "fld_root",
+      "modified": 1736860800000,
+      "created": 1736860800000,
+      "url": "{{ _.base_url }}/",
+      "name": "1. Root - Manual Testing Interface",
+      "description": "Test the manual testing interface HTML page",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [],
+      "authentication": {},
+      "metaSortKey": -1736860800000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_health",
+      "parentId": "fld_root",
+      "modified": 1736860800000,
+      "created": 1736860800000,
+      "url": "{{ _.base_url }}/health",
+      "name": "2. Health Check",
+      "description": "Test the health check endpoint",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [],
+      "authentication": {},
+      "metaSortKey": -1736860800000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_initialize",
+      "parentId": "fld_root",
+      "modified": 1736860800000,
+      "created": 1736860800000,
+      "url": "{{ _.base_url }}/initialize",
+      "name": "3. Initialize Research Session",
+      "description": "Initialize a new research session with topic and schema",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"topic\": \"David Bowie's musical evolution and influence on modern rock\",\n  \"extraction_schema\": {\n    \"type\": \"object\",\n    \"properties\": {\n      \"musical_phases\": {\n        \"type\": \"array\",\n        \"items\": {\n          \"type\": \"string\"\n        },\n        \"description\": \"Key musical phases and periods\"\n      },\n      \"influential_albums\": {\n        \"type\": \"array\",\n        \"items\": {\n          \"type\": \"string\"\n        },\n        \"description\": \"Most influential albums\"\n      },\n      \"artistic_innovations\": {\n        \"type\": \"array\",\n        \"items\": {\n          \"type\": \"string\"\n        },\n        \"description\": \"Key artistic innovations\"\n      },\n      \"cultural_impact\": {\n        \"type\": \"string\",\n        \"description\": \"Overall cultural impact and legacy\"\n      },\n      \"genre_influence\": {\n        \"type\": \"array\",\n        \"items\": {\n          \"type\": \"string\"\n        },\n        \"description\": \"Genres influenced by Bowie\"\n      }\n    },\n    \"required\": [\"musical_phases\", \"influential_albums\", \"cultural_impact\"]\n  }\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1736860800000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_execute_step",
+      "parentId": "fld_root",
+      "modified": 1736860800000,
+      "created": 1736860800000,
+      "url": "{{ _.base_url }}/execute-step/call_agent_model",
+      "name": "4. Execute Step - Agent Model",
+      "description": "Execute the call_agent_model step",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"step_data\": {\n    \"topic\": \"David Bowie's musical evolution\",\n    \"extraction_schema\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"musical_phases\": {\n          \"type\": \"array\",\n          \"items\": {\"type\": \"string\"}\n        }\n      }\n    }\n  }\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1736860800000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_hybrid_execution",
+      "parentId": "fld_root",
+      "modified": 1736860800000,
+      "created": 1736860800000,
+      "url": "{{ _.base_url }}/hybrid-execution",
+      "name": "5. Hybrid Execution",
+      "description": "Execute hybrid workflow with step-by-step control",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"topic\": \"The Beatles' impact on modern music production\",\n  \"schema\": {\n    \"type\": \"object\",\n    \"properties\": {\n      \"recording_innovations\": {\n        \"type\": \"array\",\n        \"items\": {\"type\": \"string\"}\n      },\n      \"production_techniques\": {\n        \"type\": \"array\",\n        \"items\": {\"type\": \"string\"}\n      },\n      \"influence_on_artists\": {\n        \"type\": \"array\",\n        \"items\": {\"type\": \"string\"}\n      },\n      \"legacy\": {\n        \"type\": \"string\"\n      }\n    }\n  },\n  \"max_steps\": 5,\n  \"enable_web_search\": true,\n  \"enable_scraping\": true\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1736860800000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_run_all",
+      "parentId": "fld_root",
+      "modified": 1736860800000,
+      "created": 1736860800000,
+      "url": "{{ _.base_url }}/run-all",
+      "name": "6. Run All - Complete Workflow",
+      "description": "Execute complete research workflow",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"topic\": \"Queen's musical legacy and Freddie Mercury's vocal technique\",\n  \"schema\": {\n    \"type\": \"object\",\n    \"properties\": {\n      \"vocal_techniques\": {\n        \"type\": \"array\",\n        \"items\": {\"type\": \"string\"}\n      },\n      \"signature_songs\": {\n        \"type\": \"array\",\n        \"items\": {\"type\": \"string\"}\n      },\n      \"musical_style\": {\n        \"type\": \"string\"\n      },\n      \"cultural_impact\": {\n        \"type\": \"string\"\n      },\n      \"influence_on_music\": {\n        \"type\": \"array\",\n        \"items\": {\"type\": \"string\"}\n      }\n    },\n    \"required\": [\"vocal_techniques\", \"signature_songs\", \"cultural_impact\"]\n  }\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1736860800000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_invoke",
+      "parentId": "fld_root",
+      "modified": 1736860800000,
+      "created": 1736860800000,
+      "url": "{{ _.base_url }}/invoke",
+      "name": "7. Direct Graph Invoke",
+      "description": "Directly invoke the LangGraph workflow",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"topic\": \"Pink Floyd's concept albums and progressive rock influence\",\n  \"extraction_schema\": {\n    \"type\": \"object\",\n    \"properties\": {\n      \"concept_albums\": {\n        \"type\": \"array\",\n        \"items\": {\"type\": \"string\"}\n      },\n      \"progressive_elements\": {\n        \"type\": \"array\",\n        \"items\": {\"type\": \"string\"}\n      },\n      \"musical_innovation\": {\n        \"type\": \"string\"\n      },\n      \"cultural_significance\": {\n        \"type\": \"string\"\n      }\n    }\n  }\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1736860800000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_reset",
+      "parentId": "fld_root",
+      "modified": 1736860800000,
+      "created": 1736860800000,
+      "url": "{{ _.base_url }}/reset",
+      "name": "8. Reset Session",
+      "description": "Reset the current research session",
+      "method": "POST",
+      "body": {},
+      "parameters": [],
+      "headers": [],
+      "authentication": {},
+      "metaSortKey": -1736860800000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_export",
+      "parentId": "fld_root",
+      "modified": 1736860800000,
+      "created": 1736860800000,
+      "url": "{{ _.base_url }}/export",
+      "name": "9. Export Session Data",
+      "description": "Export current session data and results",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [],
+      "authentication": {},
+      "metaSortKey": -1736860800000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_error_test",
+      "parentId": "fld_root",
+      "modified": 1736860800000,
+      "created": 1736860800000,
+      "url": "{{ _.base_url }}/initialize",
+      "name": "10. Error Test - Invalid Schema",
+      "description": "Test error handling with invalid schema",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"topic\": \"\",\n  \"extraction_schema\": {\n    \"invalid\": \"schema\",\n    \"missing\": \"required_fields\"\n  }\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": -1736860800000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_cors_proxy_health",
+      "parentId": "fld_root",
+      "modified": 1736860800000,
+      "created": 1736860800000,
+      "url": "{{ _.proxy_url }}/health",
+      "name": "11. CORS Proxy Health Check",
+      "description": "Test CORS proxy health endpoint",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [],
+      "authentication": {},
+      "metaSortKey": -1736860800000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_cors_proxy_root",
+      "parentId": "fld_root",
+      "modified": 1736860800000,
+      "created": 1736860800000,
+      "url": "{{ _.proxy_url }}/",
+      "name": "12. CORS Proxy Root",
+      "description": "Test CORS proxy root endpoint",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [],
+      "authentication": {},
+      "metaSortKey": -1736860800000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "fld_root",
+      "parentId": "wrk_langgraph_app",
+      "modified": 1736860800000,
+      "created": 1736860800000,
+      "name": "LangGraph App Tests",
+      "description": "Complete test suite for LangGraph research agent",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": -1736860800000,
+      "_type": "request_group"
+    },
+    {
+      "_id": "wrk_langgraph_app",
+      "parentId": null,
+      "modified": 1736860800000,
+      "created": 1736860800000,
+      "name": "LangGraph Research Agent",
+      "description": "Complete API testing for LangGraph research agent with MCP integration",
+      "scope": "collection",
+      "_type": "workspace"
+    },
+    {
+      "_id": "env_development",
+      "parentId": "wrk_langgraph_app",
+      "modified": 1736860800000,
+      "created": 1736860800000,
+      "name": "Development Environment",
+      "data": {
+        "base_url": "http://127.0.0.1:2025",
+        "proxy_url": "http://127.0.0.1:8080",
+        "timeout": "30000"
+      },
+      "dataPropertyOrder": {
+        "&": [
+          "base_url",
+          "proxy_url",
+          "timeout"
+        ]
+      },
+      "color": null,
+      "isPrivate": false,
+      "metaSortKey": 1736860800000,
+      "_type": "environment"
+    },
+    {
+      "_id": "env_production",
+      "parentId": "wrk_langgraph_app",
+      "modified": 1736860800000,
+      "created": 1736860800000,
+      "name": "Production Environment",
+      "data": {
+        "base_url": "https://your-production-domain.com",
+        "proxy_url": "https://your-production-proxy.com",
+        "timeout": "60000"
+      },
+      "dataPropertyOrder": {
+        "&": [
+          "base_url",
+          "proxy_url",
+          "timeout"
+        ]
+      },
+      "color": null,
+      "isPrivate": false,
+      "metaSortKey": 1736860800000,
+      "_type": "environment"
+    }
+  ]
+}

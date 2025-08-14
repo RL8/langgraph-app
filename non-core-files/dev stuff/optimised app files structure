@@ -1,0 +1,65 @@
+langgraph-app/
+├── .git/                           # Core - Version control
+├── .env                            # Core - Environment variables  
+├── .env.example                    # Core - Environment template
+├── .gitignore                      # Core - Git ignore rules
+├── LICENSE                         # Core - License
+├── README.md                       # Core - Documentation
+├── cli.py                          # Core - Command-line interface
+├── cors_proxy.py                   # Core - CORS proxy
+├── langgraph.json                  # Core - LangGraph configuration
+├── pyproject.toml                  # Core - Project configuration
+├── server_with_cors.py             # Core - Main server
+├── src/                            # Core - Application source code
+│   ├── agent/
+│   │   ├── __init__.py
+│   │   ├── configuration.py
+│   │   ├── dataset_manager.py
+│   │   ├── graph.py
+│   │   ├── prompts.py
+│   │   ├── state.py
+│   │   ├── tools.py
+│   │   └── utils.py
+│   └── mcp/
+│       ├── __init__.py
+│       ├── artist_index.py
+│       ├── artist_search.py
+│       ├── base.py
+│       └── README.md
+└── non-core-files/                 # NEW FOLDER - All non-essential files
+    ├── .benchmarks/                # Benchmark results
+    ├── .codespellignore           # Code spell checker config
+    ├── .coverage                   # Coverage reports
+    ├── .langgraph_api/            # LangGraph API cache
+    ├── .pytest_cache/             # Pytest cache
+    ├── __pycache__/               # Python cache
+    ├── agent.egg-info/            # Package build info
+    ├── dev stuff/                 # Development planning
+    │   ├── backend_upgrade_plan.md
+    │   ├── database_migration_plan.md
+    │   └── music besties plan v1
+    ├── scripts/                   # Utility scripts
+    │   ├── check_experiment_results.py
+    │   ├── create_music_samples.py
+    │   ├── manage_datasets.py
+    │   └── run_music_analysis.py
+    ├── static/                    # Static assets
+    │   └── studio_ui.png
+    ├── supabase/                  # Database files
+    │   └── .temp/
+    ├── tests/                     # All test files
+    │   ├── conftest.py
+    │   ├── experiments on langraph/
+    │   ├── integration_tests/
+    │   └── unit_tests/
+    ├── venv/                      # Virtual environment
+    ├── LANGSMITH_MVP.md           # Development docs
+    ├── MCP_IMPLEMENTATION_SUMMARY.md
+    ├── Makefile                   # Build automation
+    ├── how langgraph              # Development notes
+    ├── run_experiment_on_dataset.py
+    ├── tatus                      # Development notes
+    ├── test_graph.py              # Test files
+    ├── test_mcp_cli.py
+    ├── test_schema.json
+    └── verify_experiments.py
